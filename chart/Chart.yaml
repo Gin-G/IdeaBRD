@@ -1,0 +1,12 @@
+apiVersion: v2
+name: ideabrd
+description: IdeaBRD — a personal idea board (SvelteKit SPA + FastAPI + CloudNativePG)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - ideas
+  - kanban
+  - fastapi
+  - sveltekit
+home: https://github.com/Gin-G/IdeaBRD

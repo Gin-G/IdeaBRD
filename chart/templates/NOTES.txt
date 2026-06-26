@@ -1,0 +1,23 @@
+IdeaBRD is being deployed 🎉
+
+  Release:    {{ .Release.Name }}
+  Namespace:  {{ .Release.Namespace }}
+  URL:        {{ include "ideabrd.publicUrl" . }}
+
+Next steps:
+{{- if .Values.postgres.enabled }}
+  1. Ensure the CloudNativePG operator is installed (this chart creates a Cluster CR).
+     Watch the database come up:
+       kubectl get cluster {{ include "ideabrd.dbClusterName" . }} -n {{ .Release.Namespace }} -w
+{{- end }}
+  2. The migrate Job runs automatically (post-install hook). Check it:
+       kubectl get jobs -l app.kubernetes.io/component=migrate -n {{ .Release.Namespace }}
+{{- if not .Values.secrets.googleClientId }}
+  3. No Google OAuth client configured — the backend will use a DEV login (single shared user).
+     Set secrets.googleClientId / secrets.googleClientSecret for real Google sign-in,
+     with the redirect URI:  {{ include "ideabrd.publicUrl" . }}/api/auth/callback
+{{- else }}
+  3. Google OAuth is configured. Confirm the redirect URI in Google Cloud Console is:
+       {{ include "ideabrd.publicUrl" . }}/api/auth/callback
+{{- end }}
+  4. Point DNS for {{ .Values.ingress.host }} at your ingress controller, then open the URL.

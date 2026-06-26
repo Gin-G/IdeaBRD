@@ -1,0 +1,68 @@
+# Default values for the IdeaBRD chart.
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  registry: ghcr.io/gin-g
+  pullPolicy: IfNotPresent
+  # Defaults to .Chart.AppVersion when empty.
+  tag: ""
+
+backend:
+  image: ideabrd-backend
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+
+frontend:
+  image: ideabrd-frontend
+  replicas: 1
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+
+ingress:
+  enabled: true
+  className: nginx
+  host: ideabrd.example.com
+  annotations: {}
+  tls:
+    enabled: false
+    secretName: ideabrd-tls
+
+# App configuration. cookieSecure should be true when served over HTTPS.
+config:
+  cookieSecure: false
+  # Public origin of the app; used for the OIDC redirect and the post-login bounce.
+  # When empty, derived from ingress.host (https when tls enabled, else http).
+  publicUrl: ""
+
+# Secrets. Provide values here, or set create=false and reference an existing Secret.
+secrets:
+  create: true
+  existingSecret: ""
+  sessionSecret: "" # leave empty to auto-generate on first install
+  googleClientId: ""
+  googleClientSecret: ""
+  githubToken: ""
+
+# CloudNativePG cluster. Requires the CNPG operator installed in the cluster.
+postgres:
+  enabled: true
+  instances: 2
+  storageSize: 1Gi
+  # storageClass: ""
+  imageName: "" # e.g. ghcr.io/cloudnative-pg/postgresql:16; empty uses operator default
+  database: ideabrd
+  owner: ideabrd
+
+migrations:
+  enabled: true

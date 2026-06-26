@@ -1,0 +1,31 @@
+{{- if .Values.migrations.enabled -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "ideabrd.fullname" . }}-migrate
+  labels:
+    {{- include "ideabrd.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    # Run on install and upgrade, after the other resources exist.
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  # Retry while the database becomes ready (CNPG takes a moment to bootstrap).
+  backoffLimit: 12
+  template:
+    metadata:
+      labels:
+        {{- include "ideabrd.labels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: {{ include "ideabrd.backendImage" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["alembic", "upgrade", "head"]
+          env:
+            {{- include "ideabrd.backendEnv" . | nindent 12 }}
+{{- end -}}
