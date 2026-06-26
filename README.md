@@ -76,59 +76,90 @@ npm run build      # static SPA -> build/
 ## Building images
 
 ```bash
-docker build -t ghcr.io/gin-g/ideabrd-backend:0.1.0 backend
-docker build -t ghcr.io/gin-g/ideabrd-frontend:0.1.0 frontend
-docker push ghcr.io/gin-g/ideabrd-backend:0.1.0
-docker push ghcr.io/gin-g/ideabrd-frontend:0.1.0
+docker build -t docker.io/ncging/ideabrd-backend:latest backend
+docker build -t docker.io/ncging/ideabrd-frontend:latest frontend
+docker push docker.io/ncging/ideabrd-backend:latest
+docker push docker.io/ncging/ideabrd-frontend:latest
 ```
 
-Adjust `image.registry` / `image.tag` in the chart to match.
+Set the matching `backend.container.image` / `frontend.container.image` in `chart/values.yaml`.
 
 ---
 
 ## Deploying to Kubernetes
 
-### 1. Install the CloudNativePG operator (once per cluster)
+The chart (`chart/`) follows the same conventions as the ratetheslopes deployment:
+**External Secrets Operator + OpenBao** for all secrets, **CloudNativePG** bootstrapped from
+ESO-provided credentials, per-service ingresses (cert-manager + external-dns), and everything
+driven from `chart/values.yaml`. It is intended to be deployed by **Argo CD** (see
+`argocd/ideabrd-application.yaml`).
+
+### Cluster prerequisites
+
+- **CloudNativePG operator** (provides the `Cluster` CRD)
+- **External Secrets Operator** (provides `SecretStore` / `ExternalSecret`)
+- **OpenBao/Vault** reachable at `openbao.openbao.svc.cluster.local:8200`, plus an
+  `openbao-credentials` Secret (key `OPENBAO_TOKEN`) in the `ideabrd` namespace
+- cert-manager `ClusterIssuer` `letsencrypt-cloudflare` and external-dns (for the ingresses)
+
+### OpenBao secret paths
+
+The chart's ExternalSecrets read from these KV paths (override via `values.yaml`):
+
+| Path (`kv/...`) | Properties |
+|-----------------|------------|
+| `ideabrd/db`      | `dbsu`, `dbsupassw` (superuser), `dbuser`, `dbpassw` (app user) |
+| `ideabrd/backend` | `session_secret`, `google_client_id`, `google_client_secret`, `github_token` |
+
+> The app-user value at `ideabrd/db:dbuser` **must equal** `db.app.owner` in `values.yaml`
+> (CNPG creates the owning role from that secret).
+
+### Install
+
+Set your hostname, images, and OpenBao paths in `chart/values.yaml`, then either let Argo sync
+it, or install directly:
 
 ```bash
-kubectl apply --server-side -f \
-  https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.24/releases/cnpg-1.24.0.yaml
-```
-
-### 2. Install the chart
-
-```bash
-helm install ideabrd ./chart \
-  --namespace ideabrd --create-namespace \
-  --set ingress.host=ideabrd.example.com \
-  --set image.tag=0.1.0 \
-  --set config.cookieSecure=true \
-  --set secrets.googleClientId=YOUR_ID \
-  --set secrets.googleClientSecret=YOUR_SECRET \
-  --set secrets.githubToken=YOUR_PAT
+helm install ideabrd ./chart --namespace ideabrd --create-namespace
 ```
 
 What happens:
 
-- A CNPG `Cluster` is created; the operator provisions Postgres and a `*-db-app` secret
-  containing the connection `uri` (the backend consumes it directly — the app rewrites the
-  scheme to `postgresql+asyncpg`).
-- A post-install **migrate Job** runs `alembic upgrade head` (retries while the DB comes up).
-- The Ingress routes `/api` to the backend and everything else to the SPA.
-- `SESSION_SECRET` is auto-generated and preserved across upgrades if you don't set one.
+- A `SecretStore` (`openbao-backend`) and three `ExternalSecret`s materialize the backend
+  config Secret plus the CNPG superuser/app-user Secrets from OpenBao.
+- A CNPG `Cluster` boots Postgres using those credentials; the backend builds
+  `DATABASE_URL` as `postgresql+asyncpg://$(DB_USER):$(DB_PASS)@ideabrd-db-rw:5432/ideabrd`.
+- A post-install **migrate Job** runs `alembic upgrade head`.
+- Two Ingresses on `frontend.fqdn` route `/api` → backend and `/` → SPA, with TLS via cert-manager.
 
-Set the Google OAuth **redirect URI** to `https://<ingress.host>/api/auth/callback`.
+Set the Google OAuth **redirect URI** to `https://<frontend.fqdn>/api/auth/callback`.
 
-### Useful values
+### Key values
 
 | Value | Default | Notes |
 |-------|---------|-------|
-| `ingress.host` | `ideabrd.example.com` | Public hostname |
-| `ingress.tls.enabled` | `false` | Set true + `ingress.tls.secretName` for HTTPS |
-| `config.cookieSecure` | `false` | Set true behind HTTPS |
-| `postgres.instances` | `2` | CNPG replicas |
-| `postgres.storageSize` | `1Gi` | DB volume size |
-| `secrets.existingSecret` | `""` | Reference your own Secret instead of chart-managed |
+| `frontend.fqdn` | `ideabrd.example.com` | Public hostname (both ingresses + OAuth redirect) |
+| `frontend.container.image` / `backend.container.image` | `docker.io/ncging/ideabrd-*:latest` | Images to deploy |
+| `backend.cookieSecure` | `true` | Secure session cookie (HTTPS) |
+| `backend.secretPath` / `db.secretPath` | `ideabrd/backend`, `ideabrd/db` | OpenBao KV paths |
+| `db.instances` / `db.size` | `3`, `10Gi` | CNPG replicas and volume size |
+| `db.app.name` / `db.app.owner` | `ideabrd` | Database name / owning role |
+
+### GitOps with Argo CD
+
+`argocd/ideabrd-application.yaml` is an app-of-apps template mirroring the `rts` Application
+(gated by `index .Values "ideabrd" "enable"`, `path: chart/`). Add an `ideabrd` block to your
+app-of-apps `values.yaml`:
+
+```yaml
+ideabrd:
+  enable: true
+  source:
+    repoURL: https://github.com/Gin-G/IdeaBRD.git
+    targetRevision: main
+```
+
+Argo natively runs the Alembic migrate Job (a Helm hook) as a sync hook.
 
 ---
 
@@ -146,10 +177,11 @@ All idea/todo endpoints are scoped to the logged-in user.
 ## Verifying a deployment
 
 ```bash
-kubectl -n ideabrd get cluster,pods,job,ingress
+kubectl -n ideabrd get externalsecrets,cluster,pods,job,ingress
+# ESO secrets?   ExternalSecrets show SecretSynced=True
 # DB ready?      cluster shows "Cluster in healthy state"
-# migrate Job?   <release>-migrate shows Completions 1/1
-curl -k https://ideabrd.example.com/api/health   # {"status":"ok",...}
+# migrate Job?   ideabrd-backend-migrate shows Completions 1/1
+curl -k https://<frontend.fqdn>/api/health      # {"status":"ok",...}
 ```
 
 Open the host, sign in, create an idea, add to-dos, link a repo (`owner/name`) and confirm the

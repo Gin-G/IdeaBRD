@@ -1,68 +1,51 @@
-# Default values for the IdeaBRD chart.
-
-nameOverride: ""
-fullnameOverride: ""
-
-image:
-  registry: ghcr.io/gin-g
-  pullPolicy: IfNotPresent
-  # Defaults to .Chart.AppVersion when empty.
-  tag: ""
-
-backend:
-  image: ideabrd-backend
-  replicas: 1
-  resources:
-    requests:
-      cpu: 50m
-      memory: 128Mi
-    limits:
-      memory: 512Mi
+# IdeaBRD chart values. Mirrors the ratetheslopes (rts-helm) layout:
+# External Secrets Operator + OpenBao for secrets, CNPG bootstrapped from
+# ESO-provided credentials, per-service ingresses, everything values-driven.
 
 frontend:
-  image: ideabrd-frontend
-  replicas: 1
-  resources:
-    requests:
-      cpu: 25m
-      memory: 32Mi
-    limits:
-      memory: 128Mi
+  name: ideabrd-frontend
+  group: ideabrd
+  fqdn: ideabrd.example.com        # <-- set your real hostname
+  path: /
+  replicaCount: 1
+  container:
+    image: docker.io/ncging/ideabrd-frontend:latest
+    imagePullPolicy: Always
+    port: 80
+    cpu: "250m"
+    memory: "128Mi"
 
-ingress:
-  enabled: true
-  className: nginx
-  host: ideabrd.example.com
-  annotations: {}
-  tls:
-    enabled: false
-    secretName: ideabrd-tls
+backend:
+  name: ideabrd-backend
+  group: ideabrd
+  replicaCount: 1
+  # OpenBao path holding session_secret, google_client_id, google_client_secret, github_token
+  secretPath: ideabrd/backend
+  cookieSecure: true
+  container:
+    image: docker.io/ncging/ideabrd-backend:latest
+    imagePullPolicy: Always
+    port: 8000
+    cpu: "500m"
+    memory: "512Mi"
 
-# App configuration. cookieSecure should be true when served over HTTPS.
-config:
-  cookieSecure: false
-  # Public origin of the app; used for the OIDC redirect and the post-login bounce.
-  # When empty, derived from ingress.host (https when tls enabled, else http).
-  publicUrl: ""
+db:
+  name: ideabrd-db
+  group: ideabrd
+  instances: 3
+  size: 10Gi
+  # OpenBao path holding the superuser + app-user credentials
+  secretPath: ideabrd/db
+  app:
+    name: ideabrd            # database name
+    owner: ideabrd           # owning role (must equal the app-user username)
+  superuser:
+    userKey: dbsu
+    passwordKey: dbsupassw
+  appuser:
+    userKey: dbuser
+    passwordKey: dbpassw
 
-# Secrets. Provide values here, or set create=false and reference an existing Secret.
-secrets:
-  create: true
-  existingSecret: ""
-  sessionSecret: "" # leave empty to auto-generate on first install
-  googleClientId: ""
-  googleClientSecret: ""
-  githubToken: ""
-
-# CloudNativePG cluster. Requires the CNPG operator installed in the cluster.
-postgres:
-  enabled: true
-  instances: 2
-  storageSize: 1Gi
-  # storageClass: ""
-  imageName: "" # e.g. ghcr.io/cloudnative-pg/postgresql:16; empty uses operator default
-  database: ideabrd
-  owner: ideabrd
-
+# Alembic schema migration Job (Helm hook). RTS has no equivalent; IdeaBRD ships one.
 migrations:
   enabled: true

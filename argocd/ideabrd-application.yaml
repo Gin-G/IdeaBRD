@@ -1,0 +1,22 @@
+{{- if (index .Values "ideabrd" "enable") }}
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ideabrd
+  namespace: argo
+spec:
+  destination:
+    namespace: ideabrd
+    server: {{ .Values.spec.destination.server }}
+  project: default
+  source:
+    path: chart/
+    repoURL: {{ (index .Values "ideabrd" "source" "repoURL") }}
+    targetRevision: {{ (index .Values "ideabrd" "source" "targetRevision") }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+{{- end }}

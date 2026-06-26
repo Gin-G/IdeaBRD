@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.frontend.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.frontend.name }}
+    group: {{ .Values.frontend.group }}
+spec:
+  replicas: {{ .Values.frontend.replicaCount }}
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: {{ .Values.frontend.name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.frontend.name }}
+    spec:
+      containers:
+      - name: {{ .Values.frontend.name }}
+        image: {{ .Values.frontend.container.image }}
+        imagePullPolicy: {{ .Values.frontend.container.imagePullPolicy }}
+        ports:
+        - containerPort: {{ .Values.frontend.container.port }}
+        resources:
+          limits:
+            cpu: {{ .Values.frontend.container.cpu }}
+            memory: {{ .Values.frontend.container.memory }}
+          requests:
+            cpu: "25m"
+            memory: "32Mi"
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: {{ .Values.frontend.container.port }}
+          initialDelaySeconds: 3
+          periodSeconds: 10

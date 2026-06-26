@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.backend.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.backend.name }}
+    group: {{ .Values.backend.group }}
+spec:
+  replicas: {{ .Values.backend.replicaCount }}
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: {{ .Values.backend.name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.backend.name }}
+    spec:
+      containers:
+      - name: {{ .Values.backend.name }}
+        image: {{ .Values.backend.container.image }}
+        imagePullPolicy: {{ .Values.backend.container.imagePullPolicy }}
+        ports:
+        - containerPort: {{ .Values.backend.container.port }}
+        envFrom:
+        - secretRef:
+            name: {{ .Values.backend.name }}-config
+        env:
+        - name: DATABASE_URL
+          value: "postgresql+asyncpg://$(DB_USER):$(DB_PASS)@{{ .Values.db.name }}-rw:5432/{{ .Values.db.app.name }}"
+        - name: OAUTH_REDIRECT_URL
+          value: "https://{{ .Values.frontend.fqdn }}/api/auth/callback"
+        - name: FRONTEND_URL
+          value: "https://{{ .Values.frontend.fqdn }}"
+        - name: COOKIE_SECURE
+          value: {{ .Values.backend.cookieSecure | quote }}
+        resources:
+          limits:
+            cpu: {{ .Values.backend.container.cpu }}
+            memory: {{ .Values.backend.container.memory }}
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: {{ .Values.backend.container.port }}
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: {{ .Values.backend.container.port }}
+          initialDelaySeconds: 10
+          periodSeconds: 30

@@ -1,0 +1,21 @@
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: {{ .Values.db.name }}-superuser-esos
+  namespace: {{ .Release.Namespace }}
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: openbao-backend
+    kind: SecretStore
+  target:
+    name: {{ .Values.db.name }}-superuser
+  data:
+    - secretKey: username
+      remoteRef:
+        key: {{ .Values.db.secretPath }}
+        property: {{ .Values.db.superuser.userKey }}
+    - secretKey: password
+      remoteRef:
+        key: {{ .Values.db.secretPath }}
+        property: {{ .Values.db.superuser.passwordKey }}

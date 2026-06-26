@@ -1,0 +1,25 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ .Values.db.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.db.name }}
+    group: {{ .Values.db.group }}
+spec:
+  instances: {{ .Values.db.instances }}
+  storage:
+    size: {{ .Values.db.size }}
+
+  # Enable superuser access, credentials supplied by the superuser ExternalSecret
+  enableSuperuserAccess: true
+  superuserSecret:
+    name: {{ .Values.db.name }}-superuser
+
+  # Bootstrap the application database/user from the app-user ExternalSecret
+  bootstrap:
+    initdb:
+      database: {{ .Values.db.app.name }}
+      owner: {{ .Values.db.app.owner }}
+      secret:
+        name: {{ .Values.db.name }}-app-user

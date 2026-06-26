@@ -2,30 +2,35 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ include "ideabrd.fullname" . }}-migrate
+  name: {{ .Values.backend.name }}-migrate
+  namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ideabrd.labels" . | nindent 4 }}
-    app.kubernetes.io/component: migrate
+    app: {{ .Values.backend.name }}
+    group: {{ .Values.backend.group }}
   annotations:
     # Run on install and upgrade, after the other resources exist.
     "helm.sh/hook": post-install,post-upgrade
     "helm.sh/hook-weight": "5"
     "helm.sh/hook-delete-policy": before-hook-creation
 spec:
-  # Retry while the database becomes ready (CNPG takes a moment to bootstrap).
+  # Retry while CNPG and the ESO-provided secret become ready.
   backoffLimit: 12
   template:
     metadata:
       labels:
-        {{- include "ideabrd.labels" . | nindent 8 }}
-        app.kubernetes.io/component: migrate
+        app: {{ .Values.backend.name }}
+        group: {{ .Values.backend.group }}
     spec:
       restartPolicy: Never
       containers:
-        - name: migrate
-          image: {{ include "ideabrd.backendImage" . }}
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: ["alembic", "upgrade", "head"]
-          env:
-            {{- include "ideabrd.backendEnv" . | nindent 12 }}
-{{- end -}}
+      - name: migrate
+        image: {{ .Values.backend.container.image }}
+        imagePullPolicy: {{ .Values.backend.container.imagePullPolicy }}
+        command: ["alembic", "upgrade", "head"]
+        envFrom:
+        - secretRef:
+            name: {{ .Values.backend.name }}-config
+        env:
+        - name: DATABASE_URL
+          value: "postgresql+asyncpg://$(DB_USER):$(DB_PASS)@{{ .Values.db.name }}-rw:5432/{{ .Values.db.app.name }}"
+{{- end }}

@@ -1,0 +1,41 @@
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: {{ .Values.backend.name }}-config-eso
+  namespace: {{ .Release.Namespace }}
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: openbao-backend
+    kind: SecretStore
+  target:
+    name: {{ .Values.backend.name }}-config
+  data:
+    # Database credentials (reuse the CNPG app user) -> used to build DATABASE_URL
+    - secretKey: DB_USER
+      remoteRef:
+        key: {{ .Values.db.secretPath }}
+        property: {{ .Values.db.appuser.userKey }}
+    - secretKey: DB_PASS
+      remoteRef:
+        key: {{ .Values.db.secretPath }}
+        property: {{ .Values.db.appuser.passwordKey }}
+    # Session cookie signing secret
+    - secretKey: SESSION_SECRET
+      remoteRef:
+        key: {{ .Values.backend.secretPath }}
+        property: session_secret
+    # Google OIDC
+    - secretKey: GOOGLE_CLIENT_ID
+      remoteRef:
+        key: {{ .Values.backend.secretPath }}
+        property: google_client_id
+    - secretKey: GOOGLE_CLIENT_SECRET
+      remoteRef:
+        key: {{ .Values.backend.secretPath }}
+        property: google_client_secret
+    # GitHub token for live repo data
+    - secretKey: GITHUB_TOKEN
+      remoteRef:
+        key: {{ .Values.backend.secretPath }}
+        property: github_token
