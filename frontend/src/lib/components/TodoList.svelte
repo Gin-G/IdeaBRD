@@ -5,8 +5,9 @@
 	let {
 		ideaId,
 		todos = $bindable([]),
+		canEdit = true,
 		onchange
-	}: { ideaId: number; todos: Todo[]; onchange?: () => void } = $props();
+	}: { ideaId: number; todos: Todo[]; canEdit?: boolean; onchange?: () => void } = $props();
 
 	let newText = $state('');
 	let adding = $state(false);
@@ -29,6 +30,7 @@
 	}
 
 	async function toggle(todo: Todo) {
+		if (!canEdit) return;
 		const updated = await api.updateTodo(todo.id, { done: !todo.done });
 		todos = todos.map((t) => (t.id === todo.id ? updated : t));
 		onchange?.();
@@ -57,9 +59,10 @@
 					role="checkbox"
 					aria-checked={todo.done}
 					aria-label="toggle {todo.text}"
+					disabled={!canEdit}
 					class="grid h-5 w-5 shrink-0 place-items-center rounded-md border transition-colors {todo.done
 						? 'border-indigo-400 bg-indigo-500 text-white'
-						: 'border-white/20 hover:border-white/40'}"
+						: 'border-white/20 hover:border-white/40'} {canEdit ? '' : 'cursor-default'}"
 					onclick={() => toggle(todo)}
 				>
 					{#if todo.done}
@@ -73,18 +76,25 @@
 				<span class="flex-1 text-sm {todo.done ? 'text-slate-500 line-through' : 'text-slate-200'}"
 					>{todo.text}</span
 				>
-				<button
-					type="button"
-					aria-label="delete todo"
-					class="text-slate-500 opacity-0 transition hover:text-rose-400 group-hover:opacity-100"
-					onclick={() => remove(todo)}>✕</button
-				>
+				{#if canEdit}
+					<button
+						type="button"
+						aria-label="delete todo"
+						class="text-slate-500 opacity-0 transition hover:text-rose-400 group-hover:opacity-100"
+						onclick={() => remove(todo)}>✕</button
+					>
+				{/if}
 			</li>
 		{/each}
+		{#if todos.length === 0}
+			<li class="px-2 py-1.5 text-sm text-slate-500">No tasks yet.</li>
+		{/if}
 	</ul>
 
-	<form class="mt-3 flex gap-2" onsubmit={add}>
-		<input class="input" bind:value={newText} placeholder="Add a task…" />
-		<button class="btn-ghost shrink-0" disabled={adding || !newText.trim()}>Add</button>
-	</form>
+	{#if canEdit}
+		<form class="mt-3 flex gap-2" onsubmit={add}>
+			<input class="input" bind:value={newText} placeholder="Add a task…" />
+			<button class="btn-ghost shrink-0" disabled={adding || !newText.trim()}>Add</button>
+		</form>
+	{/if}
 </div>

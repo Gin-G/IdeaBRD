@@ -1,10 +1,28 @@
 export type Status = 'idea' | 'active' | 'paused' | 'done';
+export type Role = 'owner' | 'editor' | 'viewer';
 
 export interface User {
 	id: number;
 	email: string;
 	name: string | null;
 	avatar_url: string | null;
+}
+
+export interface OwnerInfo {
+	name: string | null;
+	email: string;
+	avatar_url: string | null;
+}
+
+export interface Collaborator {
+	status: 'active' | 'pending';
+	role: Role;
+	email: string;
+	user_id: number | null;
+	name: string | null;
+	avatar_url: string | null;
+	invite_id: number | null;
+	is_owner: boolean;
 }
 
 export interface Todo {
@@ -23,6 +41,10 @@ export interface IdeaSummary {
 	logo_url: string | null;
 	github_repo: string | null;
 	position: number;
+	role: Role;
+	shared: boolean;
+	has_collaborators: boolean;
+	owner: OwnerInfo | null;
 }
 
 export interface Idea extends IdeaSummary {
@@ -30,6 +52,8 @@ export interface Idea extends IdeaSummary {
 	created_at: string;
 	updated_at: string;
 	todos: Todo[];
+	role: Role;
+	owner: OwnerInfo | null;
 }
 
 export interface GitHubRepo {

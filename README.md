@@ -2,7 +2,8 @@
 
 A personal **idea board**. Log in with Google, get a grid of tiles — one per idea — and click
 into any tile for notes, a to-do list, progress tracking, and live GitHub data for repo-linked
-ideas. Built to run on Kubernetes.
+ideas. Share individual ideas with collaborators (editor/viewer) and they sync **live** over a
+WebSocket. Built to run on Kubernetes.
 
 ```
 ┌──────────── Browser ────────────┐
@@ -178,8 +179,25 @@ Argo natively runs the Alembic migrate Job (a Helm hook) as a sync hook.
 - **ideas** — title, notes (markdown), status (`idea`/`active`/`paused`/`done`), progress,
   color, logo, optional `github_repo`, grid position
 - **todos** — text, done, position (belong to an idea)
+- **idea_collaborators** — (idea, user, role `editor`/`viewer`, per-user board position)
+- **idea_invitations** — pending invites by email (claimed on first login)
 
-All idea/todo endpoints are scoped to the logged-in user.
+Access to an idea is granted to its owner (`ideas.user_id`) plus its collaborators.
+
+## Collaboration
+
+Ideas can be shared with individual collaborators (not the whole board). A shared idea is the
+**same record** for everyone, so edits are always consistent.
+
+- **Invite** by email from an idea's *Share* panel (owner only). Pick **editor** (can edit notes,
+  todos, progress, status) or **viewer** (read-only). Inviting an email with no account yet
+  stores a **pending invite** that auto-activates on their first Google login.
+- The shared idea appears on the collaborator's board (flagged "shared", with the owner shown);
+  the owner can only delete or manage sharing.
+- **Live sync** over a WebSocket (`/api/ws`, authenticated by the session cookie): when any member
+  changes an idea or its todos, all connected members get a push and refetch. The in-memory
+  connection manager assumes a **single backend replica** (`backend.replicaCount: 1`); scaling out
+  would need a shared pub/sub (e.g. Redis).
 
 ---
 

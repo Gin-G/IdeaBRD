@@ -15,8 +15,31 @@
 		<TileLogo logo={idea.logo_url} title={idea.title} color={idea.color} />
 		<div class="min-w-0 flex-1">
 			<h3 class="truncate text-base font-semibold text-slate-100">{idea.title}</h3>
-			<div class="mt-1.5 flex items-center gap-2">
+			<div class="mt-1.5 flex flex-wrap items-center gap-2">
 				<StatusBadge status={idea.status} />
+				{#if idea.shared && idea.owner}
+					<span
+						class="inline-flex items-center gap-1 rounded-full bg-indigo-500/15 px-2 py-0.5 text-xs text-indigo-300"
+						title="Shared by {idea.owner.name || idea.owner.email} ({idea.role})"
+					>
+						{#if idea.owner.avatar_url}
+							<img src={idea.owner.avatar_url} alt="" class="h-3.5 w-3.5 rounded-full" />
+						{/if}
+						shared
+					</span>
+				{:else if idea.has_collaborators}
+					<span
+						class="inline-flex items-center gap-1 rounded-full bg-white/5 px-2 py-0.5 text-xs text-slate-300"
+						title="You've shared this idea"
+					>
+						<svg viewBox="0 0 20 20" class="h-3 w-3 fill-current" aria-hidden="true"
+							><path
+								d="M13 8a3 3 0 100-6 3 3 0 000 6zM7 8a3 3 0 100-6 3 3 0 000 6zM7 10c-2.7 0-5 1.3-5 3.5V16h10v-2.5C12 11.3 9.7 10 7 10zM13.5 10c-.4 0-.8 0-1.2.1 1 .9 1.7 2 1.7 3.4V16h4v-2.5c0-2.2-2-3.5-4.5-3.5z"
+							/></svg
+						>
+						shared
+					</span>
+				{/if}
 				{#if idea.github_repo}
 					<span
 						class="inline-flex items-center gap-1 text-xs text-slate-400"

@@ -4,36 +4,28 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.access import can_edit, resolve_idea
 from app.auth import get_current_user
 from app.db import get_session
 from app.models import Idea, Todo, User
+from app.realtime import notify_idea
 from app.schemas import TodoCreate, TodoOut, TodoUpdate
 
 router = APIRouter(prefix="/api", tags=["todos"])
 
 
-async def _assert_owns_idea(
-    idea_id: int, user: User, session: AsyncSession
+async def _idea_for_todo(todo_id: int, session: AsyncSession) -> int | None:
+    return await session.scalar(select(Todo.idea_id).where(Todo.id == todo_id))
+
+
+async def _require_member(
+    idea_id: int, user: User, session: AsyncSession, *, edit: bool
 ) -> None:
-    owner_id = await session.scalar(select(Idea.user_id).where(Idea.id == idea_id))
-    if owner_id is None:
+    idea, role = await resolve_idea(session, idea_id, user)
+    if idea is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Idea not found")
-    if owner_id != user.id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Idea not found")
-
-
-async def _get_owned_todo(
-    todo_id: int, user: User, session: AsyncSession
-) -> Todo:
-    stmt = (
-        select(Todo)
-        .join(Idea, Todo.idea_id == Idea.id)
-        .where(Todo.id == todo_id, Idea.user_id == user.id)
-    )
-    todo = (await session.execute(stmt)).scalar_one_or_none()
-    if todo is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Todo not found")
-    return todo
+    if edit and not can_edit(role):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Read-only access")
 
 
 @router.get("/ideas/{idea_id}/todos", response_model=list[TodoOut])
@@ -42,7 +34,7 @@ async def list_todos(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    await _assert_owns_idea(idea_id, user, session)
+    await _require_member(idea_id, user, session, edit=False)
     result = await session.execute(
         select(Todo).where(Todo.idea_id == idea_id).order_by(Todo.position, Todo.id)
     )
@@ -60,7 +52,7 @@ async def create_todo(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    await _assert_owns_idea(idea_id, user, session)
+    await _require_member(idea_id, user, session, edit=True)
     max_pos = await session.scalar(
         select(func.coalesce(func.max(Todo.position), -1)).where(
             Todo.idea_id == idea_id
@@ -70,6 +62,7 @@ async def create_todo(
     session.add(todo)
     await session.commit()
     await session.refresh(todo)
+    await notify_idea(session, idea_id, "updated")
     return todo
 
 
@@ -80,11 +73,16 @@ async def update_todo(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    todo = await _get_owned_todo(todo_id, user, session)
+    idea_id = await _idea_for_todo(todo_id, session)
+    if idea_id is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Todo not found")
+    await _require_member(idea_id, user, session, edit=True)
+    todo = await session.get(Todo, todo_id)
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(todo, field, value)
     await session.commit()
     await session.refresh(todo)
+    await notify_idea(session, idea_id, "updated")
     return todo
 
 
@@ -94,6 +92,11 @@ async def delete_todo(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    todo = await _get_owned_todo(todo_id, user, session)
+    idea_id = await _idea_for_todo(todo_id, session)
+    if idea_id is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Todo not found")
+    await _require_member(idea_id, user, session, edit=True)
+    todo = await session.get(Todo, todo_id)
     await session.delete(todo)
     await session.commit()
+    await notify_idea(session, idea_id, "updated")

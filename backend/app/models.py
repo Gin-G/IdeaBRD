@@ -10,11 +10,18 @@ from sqlalchemy import (
     SmallInteger,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
+
+# Roles. "owner" is implicit (Idea.user_id); collaborators are "editor" or "viewer".
+ROLE_OWNER = "owner"
+ROLE_EDITOR = "editor"
+ROLE_VIEWER = "viewer"
+EDIT_ROLES = (ROLE_OWNER, ROLE_EDITOR)
 
 
 class User(Base):
@@ -64,6 +71,12 @@ class Idea(Base):
         cascade="all, delete-orphan",
         order_by="Todo.position",
     )
+    collaborators: Mapped[list[IdeaCollaborator]] = relationship(
+        back_populates="idea", cascade="all, delete-orphan"
+    )
+    invitations: Mapped[list[IdeaInvitation]] = relationship(
+        back_populates="idea", cascade="all, delete-orphan"
+    )
 
 
 class Todo(Base):
@@ -81,3 +94,49 @@ class Todo(Base):
     )
 
     idea: Mapped[Idea] = relationship(back_populates="todos")
+
+
+class IdeaCollaborator(Base):
+    """A user (other than the owner) granted access to a single idea."""
+
+    __tablename__ = "idea_collaborators"
+    __table_args__ = (UniqueConstraint("idea_id", "user_id", name="uq_idea_user"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    idea_id: Mapped[int] = mapped_column(
+        ForeignKey("ideas.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    role: Mapped[str] = mapped_column(String(10), default=ROLE_EDITOR)
+    # The collaborator's own grid position on their board.
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    idea: Mapped[Idea] = relationship(back_populates="collaborators")
+    user: Mapped[User] = relationship()
+
+
+class IdeaInvitation(Base):
+    """A pending invite to an email that has no account yet (claimed on first login)."""
+
+    __tablename__ = "idea_invitations"
+    __table_args__ = (UniqueConstraint("idea_id", "email", name="uq_idea_email"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    idea_id: Mapped[int] = mapped_column(
+        ForeignKey("ideas.id", ondelete="CASCADE"), index=True
+    )
+    email: Mapped[str] = mapped_column(String(320), index=True)
+    role: Mapped[str] = mapped_column(String(10), default=ROLE_EDITOR)
+    invited_by: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    idea: Mapped[Idea] = relationship(back_populates="invitations")

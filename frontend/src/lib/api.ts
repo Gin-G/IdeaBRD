@@ -1,7 +1,9 @@
 import type {
+	Collaborator,
 	GitHubRepo,
 	Idea,
 	IdeaSummary,
+	Role,
 	Todo,
 	User
 } from './types';
@@ -71,5 +73,17 @@ export const api = {
 	deleteTodo: (todoId: number) =>
 		request<void>(`/api/todos/${todoId}`, { method: 'DELETE' }),
 
-	github: (ideaId: number) => request<GitHubRepo>(`/api/ideas/${ideaId}/github`)
+	github: (ideaId: number) => request<GitHubRepo>(`/api/ideas/${ideaId}/github`),
+
+	listCollaborators: (ideaId: number) =>
+		request<Collaborator[]>(`/api/ideas/${ideaId}/collaborators`),
+	invite: (ideaId: number, email: string, role: Role) =>
+		request<Collaborator>(`/api/ideas/${ideaId}/collaborators`, {
+			method: 'POST',
+			body: JSON.stringify({ email, role })
+		}),
+	removeCollaborator: (ideaId: number, userId: number) =>
+		request<void>(`/api/ideas/${ideaId}/collaborators/${userId}`, { method: 'DELETE' }),
+	cancelInvite: (ideaId: number, inviteId: number) =>
+		request<void>(`/api/ideas/${ideaId}/invitations/${inviteId}`, { method: 'DELETE' })
 };

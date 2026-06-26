@@ -64,6 +64,12 @@ class IdeaUpdate(BaseModel):
     position: int | None = None
 
 
+class OwnerInfo(BaseModel):
+    name: str | None = None
+    email: str
+    avatar_url: str | None = None
+
+
 class IdeaOut(IdeaBase):
     model_config = ConfigDict(from_attributes=True)
 
@@ -72,6 +78,9 @@ class IdeaOut(IdeaBase):
     created_at: datetime
     updated_at: datetime
     todos: list[TodoOut] = []
+    # The requesting user's role for this idea: owner | editor | viewer.
+    role: str = "owner"
+    owner: OwnerInfo | None = None
 
 
 class IdeaSummary(BaseModel):
@@ -87,11 +96,35 @@ class IdeaSummary(BaseModel):
     logo_url: str | None = None
     github_repo: str | None = None
     position: int
+    role: str = "owner"
+    shared: bool = False  # True when this idea is shared WITH me (I'm a collaborator)
+    has_collaborators: bool = False  # True when I own it and have invited others
+    owner: OwnerInfo | None = None  # set when shared with me
 
 
 class ReorderItem(BaseModel):
     id: int
     position: int
+
+
+# ---- Collaborators ----
+
+
+class CollaboratorOut(BaseModel):
+    # "active" = a real member; "pending" = an emailed invite not yet claimed
+    status: str
+    role: str
+    email: str
+    user_id: int | None = None
+    name: str | None = None
+    avatar_url: str | None = None
+    invite_id: int | None = None
+    is_owner: bool = False
+
+
+class InviteIn(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    role: str = "editor"
 
 
 # ---- GitHub ----

@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { api } from '$lib/api';
+	import { onRealtime } from '$lib/realtime';
 	import type { Idea, IdeaSummary } from '$lib/types';
 	import Tile from '$lib/components/Tile.svelte';
 	import IdeaModal from '$lib/components/IdeaModal.svelte';
@@ -12,9 +13,9 @@
 	let showModal = $state(false);
 
 	async function load() {
-		loading = true;
 		try {
 			ideas = await api.listIdeas();
+			error = '';
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load ideas';
 		} finally {
@@ -22,7 +23,11 @@
 		}
 	}
 
-	onMount(load);
+	onMount(() => {
+		load();
+		// Any live event may affect the board (shares, edits, deletes); just refetch.
+		return onRealtime(() => load());
+	});
 
 	async function create(data: Partial<Idea>) {
 		const created = await api.createIdea(data);
