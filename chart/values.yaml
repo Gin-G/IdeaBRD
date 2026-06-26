@@ -56,6 +56,6 @@ db:
     userKey: dbuser
     passwordKey: dbpassw
 
-# Alembic schema migration Job (Helm hook). RTS has no equivalent; IdeaBRD ships one.
+# Run `alembic upgrade head` as a backend initContainer on every rollout.
 migrations:
   enabled: true

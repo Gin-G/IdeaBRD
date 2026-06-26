@@ -17,6 +17,21 @@ spec:
       labels:
         app: {{ .Values.backend.name }}
     spec:
+      {{- if .Values.migrations.enabled }}
+      # Apply Alembic migrations before the app starts. Runs on every rollout,
+      # independent of Argo hook/health phases (backend is single-replica, so no race).
+      initContainers:
+      - name: migrate
+        image: {{ .Values.backend.container.image }}
+        imagePullPolicy: {{ .Values.backend.container.imagePullPolicy }}
+        command: ["alembic", "upgrade", "head"]
+        envFrom:
+        - secretRef:
+            name: {{ .Values.backend.name }}-config
+        env:
+        - name: DATABASE_URL
+          value: "postgresql+asyncpg://$(DB_USER):$(DB_PASS)@{{ .Values.db.name }}-rw:5432/{{ .Values.db.app.name }}"
+      {{- end }}
       containers:
       - name: {{ .Values.backend.name }}
         image: {{ .Values.backend.container.image }}
