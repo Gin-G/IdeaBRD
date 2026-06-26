@@ -9,7 +9,7 @@ frontend:
   path: /
   replicaCount: 1
   container:
-    image: docker.io/ncging/ideabrd-frontend:2026-06-26.00.00   # tag auto-bumped by CI
+    image: docker.io/ncging/ideabrd-frontend:2026-06-26.20.35
     imagePullPolicy: Always
     port: 80
     cpu: "250m"
