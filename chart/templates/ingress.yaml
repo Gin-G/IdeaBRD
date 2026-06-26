@@ -1,0 +1,40 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Values.backend.group }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.backend.group }}
+    group: {{ .Values.backend.group }}
+  annotations:
+    cert-manager.io/cluster-issuer: {{ .Values.ingress.certClusterIssuer | quote }}
+    external-dns.alpha.kubernetes.io/target: {{ .Values.ingress.externalDnsTarget | quote }}
+    {{- if .Values.ingress.securityHeaders }}
+    traefik.ingress.kubernetes.io/router.middlewares: {{ .Release.Namespace }}-{{ .Values.backend.group }}-security-headers@kubernetescrd
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  tls:
+    - hosts:
+        - {{ .Values.frontend.fqdn | quote }}
+      secretName: {{ .Values.ingress.tlsSecretName }}
+  rules:
+    - host: {{ .Values.frontend.fqdn | quote }}
+      http:
+        paths:
+          # API traffic -> FastAPI backend (which already owns the /api prefix; no strip).
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.backend.name }}
+                port:
+                  number: {{ .Values.backend.container.port }}
+          # Everything else -> SPA (nginx).
+          - path: {{ .Values.frontend.path }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.frontend.name }}
+                port:
+                  number: {{ .Values.frontend.container.port }}

@@ -1,0 +1,22 @@
+{{- if .Values.ingress.securityHeaders }}
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ .Values.backend.group }}-security-headers
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.backend.group }}
+    group: {{ .Values.backend.group }}
+spec:
+  headers:
+    contentTypeNosniff: true
+    browserXssFilter: true
+    frameDeny: true
+    referrerPolicy: strict-origin-when-cross-origin
+    permissionsPolicy: "geolocation=(), microphone=(), camera=(), payment=()"
+    # HSTS (the ingress terminates TLS via cert-manager)
+    forceSTSHeader: true
+    stsSeconds: 31536000
+    stsIncludeSubdomains: true
+    stsPreload: true
+{{- end }}

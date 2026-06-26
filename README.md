@@ -93,19 +93,20 @@ docker build -t docker.io/ncging/ideabrd-frontend:$(date +%Y-%m-%d.%H.%M) fronte
 
 ## Deploying to Kubernetes
 
-The chart (`chart/`) follows the same conventions as the ratetheslopes deployment:
+The chart (`chart/`) follows the same conventions as the cluster's other apps:
 **External Secrets Operator + OpenBao** for all secrets, **CloudNativePG** bootstrapped from
-ESO-provided credentials, per-service ingresses (cert-manager + external-dns), and everything
-driven from `chart/values.yaml`. It is intended to be deployed by **Argo CD** (see
-`argocd/ideabrd-application.yaml`).
+ESO-provided credentials, a single **Traefik** ingress (cert-manager + external-dns) with an
+optional security-headers Middleware, and everything driven from `chart/values.yaml`. It is
+intended to be deployed by **Argo CD** (see `argocd/ideabrd-application.yaml`).
 
 ### Cluster prerequisites
 
 - **CloudNativePG operator** (provides the `Cluster` CRD)
 - **External Secrets Operator** (provides `SecretStore` / `ExternalSecret`)
+- **Traefik** ingress controller (provides the `Middleware` CRD; `traefik` IngressClass)
 - **OpenBao/Vault** reachable at `openbao.openbao.svc.cluster.local:8200`, plus an
   `openbao-credentials` Secret (key `OPENBAO_TOKEN`) in the `ideabrd` namespace
-- cert-manager `ClusterIssuer` `letsencrypt-cloudflare` and external-dns (for the ingresses)
+- cert-manager `ClusterIssuer` `letsencrypt-cloudflare` and external-dns (for the ingress)
 
 ### OpenBao secret paths
 
@@ -135,7 +136,8 @@ What happens:
 - A CNPG `Cluster` boots Postgres using those credentials; the backend builds
   `DATABASE_URL` as `postgresql+asyncpg://$(DB_USER):$(DB_PASS)@ideabrd-db-rw:5432/ideabrd`.
 - A post-install **migrate Job** runs `alembic upgrade head`.
-- Two Ingresses on `frontend.fqdn` route `/api` → backend and `/` → SPA, with TLS via cert-manager.
+- One Traefik Ingress on `frontend.fqdn` routes `/api` → backend and `/` → SPA (TLS via
+  cert-manager), with a security-headers Middleware attached.
 
 Set the Google OAuth **redirect URI** to `https://<frontend.fqdn>/api/auth/callback`.
 
@@ -143,7 +145,9 @@ Set the Google OAuth **redirect URI** to `https://<frontend.fqdn>/api/auth/callb
 
 | Value | Default | Notes |
 |-------|---------|-------|
-| `frontend.fqdn` | `ideabrd.example.com` | Public hostname (both ingresses + OAuth redirect) |
+| `frontend.fqdn` | `ideabrd.nickknows.net` | Public hostname (ingress host + OAuth redirect) |
+| `ingress.className` | `traefik` | Ingress class |
+| `ingress.securityHeaders` | `true` | Attach the Traefik security-headers Middleware |
 | `frontend.container.image` / `backend.container.image` | `docker.io/ncging/ideabrd-*:latest` | Images to deploy |
 | `backend.cookieSecure` | `true` | Secure session cookie (HTTPS) |
 | `backend.secretPath` / `db.secretPath` | `ideabrd/backend`, `ideabrd/db` | OpenBao KV paths |

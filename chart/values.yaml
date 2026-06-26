@@ -1,6 +1,16 @@
 # IdeaBRD chart values. Mirrors the ratetheslopes (rts-helm) layout:
 # External Secrets Operator + OpenBao for secrets, CNPG bootstrapped from
-# ESO-provided credentials, per-service ingresses, everything values-driven.
+# ESO-provided credentials, a single Traefik ingress, everything values-driven.
+
+# Ingress is a single Traefik-class Ingress on frontend.fqdn: /api -> backend, / -> frontend.
+ingress:
+  className: traefik
+  tlsSecretName: ideabrd-tls
+  certClusterIssuer: letsencrypt-cloudflare
+  externalDnsTarget: "8.44.158.127"
+  # Attach a Traefik security-headers Middleware (HSTS, nosniff, frame-deny, etc.).
+  # No CSP/no-store, so Google Fonts, avatars and custom logo URLs keep working.
+  securityHeaders: true
 
 frontend:
   name: ideabrd-frontend
