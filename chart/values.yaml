@@ -23,7 +23,7 @@ backend:
   secretPath: ideabrd/backend
   cookieSecure: true
   container:
-    image: docker.io/ncging/ideabrd-backend:2026-06-26.00.00    # tag auto-bumped by CI
+    image: docker.io/ncging/ideabrd-backend:2026-06-26.20.35
     imagePullPolicy: Always
     port: 8000
     cpu: "500m"
