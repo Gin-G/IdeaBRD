@@ -5,11 +5,11 @@
 frontend:
   name: ideabrd-frontend
   group: ideabrd
-  fqdn: ideabrd.example.com        # <-- set your real hostname
+  fqdn: ideabrd.nickknows.net      # <-- set your real hostname
   path: /
   replicaCount: 1
   container:
-    image: docker.io/ncging/ideabrd-frontend:latest
+    image: docker.io/ncging/ideabrd-frontend:2026-06-26.00.00   # tag auto-bumped by CI
     imagePullPolicy: Always
     port: 80
     cpu: "250m"
@@ -23,7 +23,7 @@ backend:
   secretPath: ideabrd/backend
   cookieSecure: true
   container:
-    image: docker.io/ncging/ideabrd-backend:latest
+    image: docker.io/ncging/ideabrd-backend:2026-06-26.00.00    # tag auto-bumped by CI
     imagePullPolicy: Always
     port: 8000
     cpu: "500m"

@@ -1,0 +1,49 @@
+# Builds the frontend image on changes under frontend/, pushes it to Docker Hub with a
+# datetime tag, then bumps chart/values.yaml so Argo CD rolls out the new version.
+# The Docker build runs `npm run build`, so a broken build fails the workflow before any push.
+name: IdeaBRD Frontend Container Build
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - frontend/**
+  workflow_dispatch:
+
+jobs:
+  build-image-update-helm:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the code repository
+        uses: actions/checkout@v4
+      - name: Login to DockerHub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Get the current date for an image tag
+        id: date
+        run: echo "date=$(date +'%Y-%m-%d.%H.%M')" >> $GITHUB_OUTPUT
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v4
+        with:
+          context: frontend
+          file: frontend/Dockerfile
+          push: true
+          tags: |
+            ncging/ideabrd-frontend:latest
+            ncging/ideabrd-frontend:${{ steps.date.outputs.date }}
+      - name: Update Helm chart with new image
+        run: |
+          sed -i "\|image: docker.io/ncging/ideabrd-frontend:|c\\    image: docker.io/ncging/ideabrd-frontend:${{ steps.date.outputs.date }}" chart/values.yaml
+      - name: Push changes to GitHub
+        run: |
+          git config --global user.email "$GITHUB_ACTOR@users.noreply.github.com"
+          git config --global user.name "$GITHUB_ACTOR"
+          git add chart/values.yaml
+          git commit -m "Frontend image ${{ steps.date.outputs.date }}: bump Helm values"
+          git pull --rebase origin ${{ github.ref_name }}
+          git push origin ${{ github.ref_name }}

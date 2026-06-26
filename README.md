@@ -75,14 +75,19 @@ npm run build      # static SPA -> build/
 
 ## Building images
 
-```bash
-docker build -t docker.io/ncging/ideabrd-backend:latest backend
-docker build -t docker.io/ncging/ideabrd-frontend:latest frontend
-docker push docker.io/ncging/ideabrd-backend:latest
-docker push docker.io/ncging/ideabrd-frontend:latest
-```
+Images are built by **GitHub Actions** (`.github/workflows/{backend,frontend}-build.yaml`): a
+push under `backend/` or `frontend/` builds and pushes a datetime-tagged image
+(`ncging/ideabrd-*:YYYY-MM-DD.HH.MM`) to Docker Hub, then `sed`-bumps the tag in
+`chart/values.yaml` and commits it back — Argo CD then rolls out the new version. Requires repo
+secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`. Trigger the first build manually via
+*Actions → Run workflow* (`workflow_dispatch`) to seed real image tags.
 
-Set the matching `backend.container.image` / `frontend.container.image` in `chart/values.yaml`.
+To build locally instead:
+
+```bash
+docker build -t docker.io/ncging/ideabrd-backend:$(date +%Y-%m-%d.%H.%M) backend
+docker build -t docker.io/ncging/ideabrd-frontend:$(date +%Y-%m-%d.%H.%M) frontend
+```
 
 ---
 
