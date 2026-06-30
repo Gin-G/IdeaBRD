@@ -34,8 +34,20 @@ spec:
       remoteRef:
         key: {{ .Values.backend.secretPath }}
         property: google_client_secret
-    # GitHub token for live repo data
+    # GitHub PAT — fallback for live repo data when a user has no GitHub login
     - secretKey: GITHUB_TOKEN
       remoteRef:
         key: {{ .Values.backend.secretPath }}
         property: github_token
+    {{- if .Values.backend.githubOAuth }}
+    # GitHub OAuth app (user login + per-user repo access). Requires these properties
+    # to exist in OpenBao at backend.secretPath, else the whole ExternalSecret fails.
+    - secretKey: GITHUB_CLIENT_ID
+      remoteRef:
+        key: {{ .Values.backend.secretPath }}
+        property: github_client_id
+    - secretKey: GITHUB_CLIENT_SECRET
+      remoteRef:
+        key: {{ .Values.backend.secretPath }}
+        property: github_client_secret
+    {{- end }}

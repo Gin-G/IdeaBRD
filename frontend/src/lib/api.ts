@@ -3,6 +3,8 @@ import type {
 	GitHubRepo,
 	Idea,
 	IdeaSummary,
+	Identity,
+	Providers,
 	Role,
 	Todo,
 	User
@@ -48,8 +50,21 @@ export function redirectToLogin() {
 	window.location.href = `${BASE}/api/auth/login`;
 }
 
+export function redirectToGithubLogin() {
+	window.location.href = `${BASE}/api/auth/github/login`;
+}
+
+/** Link a GitHub account to the currently logged-in user. */
+export function connectGithub() {
+	window.location.href = `${BASE}/api/auth/github/login?connect=1`;
+}
+
 export const api = {
+	providers: () => request<Providers>('/api/auth/providers'),
 	me: () => request<User>('/api/auth/me'),
+	identities: () => request<Identity[]>('/api/auth/identities'),
+	unlinkIdentity: (provider: string) =>
+		request<void>(`/api/auth/identities/${provider}`, { method: 'DELETE' }),
 	logout: () => request<{ ok: boolean }>('/api/auth/logout', { method: 'POST' }),
 
 	listIdeas: () => request<IdeaSummary[]>('/api/ideas'),

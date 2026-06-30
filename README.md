@@ -118,6 +118,11 @@ The chart's ExternalSecrets read from these KV paths (override via `values.yaml`
 | `ideabrd/db`      | `dbsu`, `dbsupassw` (superuser), `dbuser`, `dbpassw` (app user) |
 | `ideabrd/backend` | `session_secret`, `google_client_id`, `google_client_secret`, `github_token` |
 
+To enable **GitHub login**, create a GitHub OAuth app (callback
+`https://<fqdn>/api/auth/github/callback`), add `github_client_id` + `github_client_secret` to
+`ideabrd/backend` in OpenBao, and set `backend.githubOAuth: true` in `values.yaml`. (The flag
+gates those two ExternalSecret keys — without the OpenBao values present the sync would fail.)
+
 > The app-user value at `ideabrd/db:dbuser` **must equal** `db.app.owner` in `values.yaml`
 > (CNPG creates the owning role from that secret).
 
@@ -173,9 +178,24 @@ Argo natively runs the Alembic migrate Job (a Helm hook) as a sync hook.
 
 ---
 
+## Sign-in & accounts
+
+Log in with **Google** (OIDC) or **GitHub** (OAuth2). Each provider login is an `identities`
+row pointing at one `users` record, so a single account can hold both:
+
+- **Auto-link by verified email** — signing in with GitHub whose primary *verified* email matches
+  an existing Google account joins them automatically (same board). Unverified emails don't link.
+- **Manual connect** — from the **Account** panel (click your name) you can *Connect* the other
+  provider even when emails differ, or *Unlink* one (you must keep at least one).
+- The GitHub login stores a per-user token used by the repo file sync (see below); the shared
+  `GITHUB_TOKEN` PAT is only a fallback for live repo data.
+
+When neither Google nor GitHub is configured, a built-in **dev login** is used (single local user).
+
 ## Data model
 
-- **users** — `google_sub`, email, name, avatar
+- **users** — email, name, avatar
+- **identities** — (provider `google`/`github`, subject) → user; GitHub token for repo access
 - **ideas** — title, notes (markdown), status (`idea`/`active`/`paused`/`done`), progress,
   color, logo, optional `github_repo`, grid position
 - **todos** — text, done, position (belong to an idea)

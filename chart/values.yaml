@@ -32,6 +32,9 @@ backend:
   # OpenBao path holding session_secret, google_client_id, google_client_secret, github_token
   secretPath: ideabrd/backend
   cookieSecure: true
+  # Enable GitHub login. Requires github_client_id + github_client_secret in OpenBao
+  # at secretPath (else the ExternalSecret sync fails). Off by default.
+  githubOAuth: false
   container:
     image: docker.io/ncging/ideabrd-backend:2026-06-27.13.33
     imagePullPolicy: Always

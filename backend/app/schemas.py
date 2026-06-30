@@ -14,6 +14,15 @@ class UserOut(BaseModel):
     avatar_url: str | None = None
 
 
+class IdentityOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    provider: str
+    email: str | None = None
+    github_login: str | None = None
+    has_repo_token: bool = False
+
+
 # ---- Todos ----
 
 

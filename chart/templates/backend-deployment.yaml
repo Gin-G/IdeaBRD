@@ -46,6 +46,8 @@ spec:
           value: "postgresql+asyncpg://$(DB_USER):$(DB_PASS)@{{ .Values.db.name }}-rw:5432/{{ .Values.db.app.name }}"
         - name: OAUTH_REDIRECT_URL
           value: "https://{{ .Values.frontend.fqdn }}/api/auth/callback"
+        - name: GITHUB_REDIRECT_URL
+          value: "https://{{ .Values.frontend.fqdn }}/api/auth/github/callback"
         - name: FRONTEND_URL
           value: "https://{{ .Values.frontend.fqdn }}"
         - name: COOKIE_SECURE

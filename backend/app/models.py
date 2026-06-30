@@ -28,7 +28,6 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    google_sub: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     email: Mapped[str] = mapped_column(String(320))
     name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
@@ -39,6 +38,34 @@ class User(Base):
     ideas: Mapped[list[Idea]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+    identities: Mapped[list[Identity]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+
+
+class Identity(Base):
+    """A federated login (Google or GitHub) attached to a user. A user may have several."""
+
+    __tablename__ = "identities"
+    __table_args__ = (
+        UniqueConstraint("provider", "subject", name="uq_provider_subject"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    provider: Mapped[str] = mapped_column(String(20))  # "google" | "github"
+    subject: Mapped[str] = mapped_column(String(255))  # provider's stable user id
+    email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    github_login: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # OAuth access token (used for repo file sync). Stored as-is; see SECURITY note in README.
+    github_token: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    user: Mapped[User] = relationship(back_populates="identities")
 
 
 class Idea(Base):

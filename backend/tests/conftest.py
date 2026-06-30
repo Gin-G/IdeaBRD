@@ -34,8 +34,8 @@ async def users(db):
     from app.db import SessionLocal
 
     async with SessionLocal() as s:
-        a = User(google_sub="user-a", email="a@example.com", name="A")
-        b = User(google_sub="user-b", email="b@example.com", name="B")
+        a = User(email="a@example.com", name="A")
+        b = User(email="b@example.com", name="B")
         s.add_all([a, b])
         await s.commit()
         await s.refresh(a)

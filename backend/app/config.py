@@ -43,14 +43,24 @@ class Settings(BaseSettings):
     # Where to send the browser after a successful login (the SPA origin)
     frontend_url: str = "http://localhost:5173"
 
-    # GitHub
+    # GitHub — shared PAT (fallback for live repo data when a user has no GitHub login)
     github_token: str = ""
     github_api_base: str = "https://api.github.com"
+
+    # GitHub OAuth app (user login + per-user repo access)
+    github_client_id: str = ""
+    github_client_secret: str = ""
+    github_redirect_url: str = "http://localhost:8000/api/auth/github/callback"
+    github_scope: str = "read:user user:email repo"
 
     @property
     def auth_enabled(self) -> bool:
         """True when Google OIDC is configured. When false, a dev login is used instead."""
         return bool(self.google_client_id and self.google_client_secret)
+
+    @property
+    def github_oauth_enabled(self) -> bool:
+        return bool(self.github_client_id and self.github_client_secret)
 
 
 @lru_cache

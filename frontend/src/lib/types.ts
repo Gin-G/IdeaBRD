@@ -8,6 +8,19 @@ export interface User {
 	avatar_url: string | null;
 }
 
+export interface Providers {
+	google: boolean;
+	github: boolean;
+	dev: boolean;
+}
+
+export interface Identity {
+	provider: 'google' | 'github';
+	email: string | null;
+	github_login: string | null;
+	has_repo_token: boolean;
+}
+
 export interface OwnerInfo {
 	name: string | null;
 	email: string;

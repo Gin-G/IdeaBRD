@@ -6,7 +6,7 @@ async def _create_third_user(email: str) -> int:
     from app.models import User
 
     async with SessionLocal() as s:
-        u = User(google_sub=f"sub-{email}", email=email, name=email.split("@")[0])
+        u = User(email=email, name=email.split("@")[0])
         s.add(u)
         await s.commit()
         await s.refresh(u)
@@ -85,16 +85,17 @@ async def test_pending_invite_claimed_on_login(users, make_client, anon_client):
         assert any(c["status"] == "pending" and c["email"] == "newbie@example.com" for c in listing)
 
     # Simulate that person registering with the matching email, then it auto-activates.
-    from app.auth import upsert_user
+    from app.auth import login_with_identity
     from app.db import SessionLocal
 
     async with SessionLocal() as s:
-        user = await upsert_user(
+        user = await login_with_identity(
             s,
-            google_sub="newbie-sub",
+            provider="google",
+            subject="newbie-sub",
             email="newbie@example.com",
+            email_verified=True,
             name="Newbie",
-            avatar_url=None,
         )
         newbie_id = user.id
 
