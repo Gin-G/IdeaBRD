@@ -17,15 +17,20 @@ async def resolve_idea(
     user: User,
     *,
     with_todos: bool = False,
+    fresh: bool = False,
 ) -> tuple[Idea | None, str | None]:
     """Return (idea, role) if the user is a member of the idea, else (None, None).
 
     role is "owner", "editor" or "viewer". Non-members get (None, None) so callers
-    can return 404 without leaking the idea's existence.
+    can return 404 without leaking the idea's existence. Pass fresh=True to
+    overwrite already-loaded attributes/collections (e.g. after a git pull
+    mutated todos outside the relationship).
     """
     stmt = select(Idea).where(Idea.id == idea_id)
     if with_todos:
         stmt = stmt.options(selectinload(Idea.todos))
+    if fresh:
+        stmt = stmt.execution_options(populate_existing=True)
     idea = (await session.execute(stmt)).scalar_one_or_none()
     if idea is None:
         return None, None

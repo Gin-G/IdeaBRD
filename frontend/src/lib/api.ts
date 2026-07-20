@@ -69,6 +69,10 @@ export const api = {
 
 	listIdeas: () => request<IdeaSummary[]>('/api/ideas'),
 	getIdea: (id: number) => request<Idea>(`/api/ideas/${id}`),
+	syncIdea: (id: number) => request<Idea>(`/api/ideas/${id}/sync`, { method: 'POST' }),
+	/** User-confirmed opt-in: commit IDEA.md to the linked repo to start tracking. */
+	initIdeaSync: (id: number) =>
+		request<Idea>(`/api/ideas/${id}/sync?init=true`, { method: 'POST' }),
 	createIdea: (data: Partial<Idea>) =>
 		request<Idea>('/api/ideas', { method: 'POST', body: JSON.stringify(data) }),
 	updateIdea: (id: number, data: Partial<Idea>) =>

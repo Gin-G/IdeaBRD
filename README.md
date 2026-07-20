@@ -197,7 +197,8 @@ When neither Google nor GitHub is configured, a built-in **dev login** is used (
 - **users** — email, name, avatar
 - **identities** — (provider `google`/`github`, subject) → user; GitHub token for repo access
 - **ideas** — title, notes (markdown), status (`idea`/`active`/`paused`/`done`), progress,
-  color, logo, optional `github_repo`, grid position
+  color, logo, optional `github_repo`, grid position, git sync state (`github_file_sha`,
+  `git_synced_at`)
 - **todos** — text, done, position (belong to an idea)
 - **idea_collaborators** — (idea, user, role `editor`/`viewer`, per-user board position)
 - **idea_invitations** — pending invites by email (claimed on first login)
@@ -218,6 +219,41 @@ Ideas can be shared with individual collaborators (not the whole board). A share
   changes an idea or its todos, all connected members get a push and refetch. The in-memory
   connection manager assumes a **single backend replica** (`backend.replicaCount: 1`); scaling out
   would need a shared pub/sub (e.g. Redis).
+
+## Git sync (IDEA.md)
+
+For repo-linked ideas, the idea's details live in an **`IDEA.md`** at the root of the linked
+repo — **git is the source of truth**:
+
+```markdown
+---
+status: active
+progress: 60
+---
+
+# My idea
+
+Free-form markdown notes.
+
+## Todos
+
+- [x] set up repo
+- [ ] build MVP
+```
+
+- **Pull (git wins)** — opening a tile (or *Sync now*) fetches `IDEA.md` via the Contents API;
+  if its blob sha changed, the file's title, notes, status, progress and todo checkboxes
+  overwrite the database copy and members get a live-sync push. Parsing is lenient, so
+  hand-edits on GitHub are fine.
+- **Push** — edits made in the app (notes, status, progress, todos) are committed back to
+  `IDEA.md` (`… (via IdeaBRD)` commit messages) using the idea owner's GitHub token, falling
+  back to the acting user's, then the shared PAT.
+- **Opt-in tracking** — linking a repo that already has an `IDEA.md` adopts it automatically.
+  If the repo has none, **nothing is committed until the user confirms**: the tile's *Git sync*
+  panel prompts "Add IDEA.md to repo" (`POST /api/ideas/{id}/sync?init=true`), and app edits
+  stay database-only until then.
+- Sync is best-effort: GitHub errors are reported in the tile (`git_sync_error`) and never
+  block the app. Push conflicts (stale sha) retry once against the current file.
 
 ---
 

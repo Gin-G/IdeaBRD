@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import re
 import time
 
@@ -33,13 +34,14 @@ def normalize_repo(repo: str) -> str:
     return repo
 
 
-def _headers() -> dict[str, str]:
+def _headers(token: str | None = None) -> dict[str, str]:
     headers = {
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
-    if settings.github_token:
-        headers["Authorization"] = f"Bearer {settings.github_token}"
+    token = token or settings.github_token
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     return headers
 
 
@@ -92,6 +94,81 @@ async def fetch_repo(repo: str, *, client: httpx.AsyncClient | None = None) -> G
     )
     _cache[full_name] = (time.monotonic(), result)
     return result
+
+
+async def get_file(
+    repo: str,
+    path: str,
+    *,
+    token: str | None = None,
+    client: httpx.AsyncClient | None = None,
+) -> tuple[str, str] | None:
+    """Fetch a file via the Contents API. Returns (text, blob_sha), or None if absent."""
+    full_name = normalize_repo(repo)
+    owned_client = client is None
+    client = client or httpx.AsyncClient(base_url=settings.github_api_base, timeout=10.0)
+    try:
+        resp = await client.get(
+            f"/repos/{full_name}/contents/{path}", headers=_headers(token)
+        )
+        if resp.status_code == 404:
+            return None
+        if resp.status_code == 403:
+            raise GitHubError("GitHub rate limit or access denied", status_code=403)
+        resp.raise_for_status()
+        data = resp.json()
+        if isinstance(data, list):  # path is a directory
+            raise GitHubError(f"{path} is a directory, not a file", status_code=400)
+        text = base64.b64decode(data.get("content", "") or "").decode("utf-8")
+        return text, data["sha"]
+    except httpx.HTTPError as exc:
+        raise GitHubError(f"GitHub request failed: {exc}") from exc
+    finally:
+        if owned_client:
+            await client.aclose()
+
+
+async def put_file(
+    repo: str,
+    path: str,
+    content: str,
+    message: str,
+    *,
+    sha: str | None = None,
+    token: str | None = None,
+    client: httpx.AsyncClient | None = None,
+) -> str:
+    """Create or update a file via the Contents API. Returns the new blob sha.
+
+    Pass the current blob sha when updating; omit it when creating. A 409/422
+    means the sha is stale (the file changed underneath us).
+    """
+    full_name = normalize_repo(repo)
+    body: dict[str, str] = {
+        "message": message,
+        "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
+    }
+    if sha:
+        body["sha"] = sha
+    owned_client = client is None
+    client = client or httpx.AsyncClient(base_url=settings.github_api_base, timeout=10.0)
+    try:
+        resp = await client.put(
+            f"/repos/{full_name}/contents/{path}", headers=_headers(token), json=body
+        )
+        if resp.status_code in (409, 422):
+            raise GitHubError("File changed on GitHub since last sync", status_code=409)
+        if resp.status_code in (401, 403):
+            raise GitHubError("GitHub token lacks write access", status_code=403)
+        if resp.status_code == 404:
+            raise GitHubError("Repository not found or no write access", status_code=404)
+        resp.raise_for_status()
+        return resp.json()["content"]["sha"]
+    except httpx.HTTPError as exc:
+        raise GitHubError(f"GitHub request failed: {exc}") from exc
+    finally:
+        if owned_client:
+            await client.aclose()
 
 
 def clear_cache() -> None:

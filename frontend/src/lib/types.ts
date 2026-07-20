@@ -67,6 +67,12 @@ export interface Idea extends IdeaSummary {
 	todos: Todo[];
 	role: Role;
 	owner: OwnerInfo | null;
+	/** Last successful IDEA.md sync with the linked repo (git is the source of truth). */
+	git_synced_at: string | null;
+	/** Error from the most recent sync attempt, if it failed. */
+	git_sync_error: string | null;
+	/** True when the linked repo has no IDEA.md yet — tracking awaits the user's opt-in. */
+	git_file_missing: boolean;
 }
 
 export interface GitHubRepo {

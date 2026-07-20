@@ -9,6 +9,7 @@
 	import ProgressBar from '$lib/components/ProgressBar.svelte';
 	import TodoList from '$lib/components/TodoList.svelte';
 	import GitHubPanel from '$lib/components/GitHubPanel.svelte';
+	import GitSyncPanel from '$lib/components/GitSyncPanel.svelte';
 	import IdeaModal from '$lib/components/IdeaModal.svelte';
 	import CollaboratorsPanel from '$lib/components/CollaboratorsPanel.svelte';
 
@@ -213,6 +214,7 @@
 			</div>
 
 			{#if idea.github_repo}
+				<GitSyncPanel {idea} {canEdit} onsynced={(updated) => (idea = updated)} />
 				<GitHubPanel ideaId={idea.id} repo={idea.github_repo} />
 			{/if}
 		</div>

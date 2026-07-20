@@ -7,11 +7,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.access import can_edit, resolve_idea
 from app.auth import get_current_user
 from app.db import get_session
+from app.gitsync import sync_push
 from app.models import Idea, Todo, User
 from app.realtime import notify_idea
 from app.schemas import TodoCreate, TodoOut, TodoUpdate
 
 router = APIRouter(prefix="/api", tags=["todos"])
+
+
+async def _push_to_git(
+    idea_id: int, user: User, session: AsyncSession, message: str
+) -> None:
+    """Best-effort commit of the idea's IDEA.md after a todo change."""
+    idea, _role = await resolve_idea(session, idea_id, user, with_todos=True)
+    if idea is not None and idea.github_repo:
+        await sync_push(session, idea, user, message)
+        await session.commit()
 
 
 async def _idea_for_todo(todo_id: int, session: AsyncSession) -> int | None:
@@ -63,6 +74,7 @@ async def create_todo(
     await session.commit()
     await session.refresh(todo)
     await notify_idea(session, idea_id, "updated")
+    await _push_to_git(idea_id, user, session, f"Add todo: {payload.text[:50]}")
     return todo
 
 
@@ -83,6 +95,7 @@ async def update_todo(
     await session.commit()
     await session.refresh(todo)
     await notify_idea(session, idea_id, "updated")
+    await _push_to_git(idea_id, user, session, f"Update todo: {todo.text[:50]}")
     return todo
 
 
@@ -97,6 +110,8 @@ async def delete_todo(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Todo not found")
     await _require_member(idea_id, user, session, edit=True)
     todo = await session.get(Todo, todo_id)
+    text = todo.text
     await session.delete(todo)
     await session.commit()
     await notify_idea(session, idea_id, "updated")
+    await _push_to_git(idea_id, user, session, f"Remove todo: {text[:50]}")

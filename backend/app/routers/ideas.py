@@ -12,6 +12,7 @@ from app.access import (
 )
 from app.auth import get_current_user
 from app.db import get_session
+from app.gitsync import SyncStatus, sync_init, sync_pull, sync_push
 from app.models import Idea, IdeaCollaborator, IdeaInvitation, User
 from app.realtime import notify_idea
 from app.schemas import (
@@ -26,9 +27,14 @@ from app.schemas import (
 router = APIRouter(prefix="/api/ideas", tags=["ideas"])
 
 
-def _idea_out(idea: Idea, role: str, owner: User | None) -> IdeaOut:
+def _idea_out(
+    idea: Idea, role: str, owner: User | None, sync_error: str | None = None
+) -> IdeaOut:
     out = IdeaOut.model_validate(idea)
     out.role = role
+    out.git_sync_error = sync_error
+    # No sha yet = tracking hasn't started (file absent or never pulled).
+    out.git_file_missing = bool(idea.github_repo) and idea.github_file_sha is None
     if owner is not None and owner.id != idea.user_id:
         owner = None  # safety
     if role != "owner" and owner is not None:
@@ -36,6 +42,24 @@ def _idea_out(idea: Idea, role: str, owner: User | None) -> IdeaOut:
             name=owner.name, email=owner.email, avatar_url=owner.avatar_url
         )
     return out
+
+
+async def _pull_from_git(
+    session: AsyncSession, idea: Idea, user: User
+) -> tuple[Idea, SyncStatus]:
+    """Pull IDEA.md into the idea (git wins), commit, and broadcast if it changed.
+
+    Returns the reloaded idea and the sync status.
+    """
+    idea_id = idea.id
+    sync_state = await sync_pull(session, idea, user)
+    await session.commit()
+    if sync_state.changed:
+        await notify_idea(session, idea_id, "updated")
+    # Re-select fresh: the commit expired server-onupdate columns, and a pull
+    # may have changed todo rows outside the loaded relationship.
+    idea, _ = await resolve_idea(session, idea_id, user, with_todos=True, fresh=True)
+    return idea, sync_state
 
 
 @router.get("", response_model=list[IdeaSummary])
@@ -122,7 +146,13 @@ async def create_idea(
     session.add(idea)
     await session.commit()
     idea, role = await resolve_idea(session, idea.id, user, with_todos=True)
-    return _idea_out(idea, role, None)
+    sync_error = None
+    if idea.github_repo:
+        # Adopt the repo's IDEA.md if it exists (git wins). If it doesn't, the
+        # response's git_file_missing flag prompts the user to opt in.
+        idea, sync_state = await _pull_from_git(session, idea, user)
+        sync_error = sync_state.error
+    return _idea_out(idea, role, None, sync_error)
 
 
 @router.patch("/reorder", status_code=status.HTTP_204_NO_CONTENT)
@@ -176,8 +206,46 @@ async def get_idea(
     idea, role = await resolve_idea(session, idea_id, user, with_todos=True)
     if idea is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Idea not found")
+    idea, sync_state = await _pull_from_git(session, idea, user)
     owner = None if role == "owner" else await session.get(User, idea.user_id)
-    return _idea_out(idea, role, owner)
+    return _idea_out(idea, role, owner, sync_state.error)
+
+
+@router.post("/{idea_id}/sync", response_model=IdeaOut)
+async def sync_idea(
+    idea_id: int,
+    init: bool = False,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Force a pull of IDEA.md from the linked repo (git wins).
+
+    With init=true, and only when the repo has no IDEA.md yet, commit one from
+    the idea's current state — the user's explicit opt-in to track the idea
+    in their repo.
+    """
+    idea, role = await resolve_idea(session, idea_id, user, with_todos=True)
+    if idea is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Idea not found")
+    if not idea.github_repo:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Idea has no linked GitHub repo",
+        )
+    idea, sync_state = await _pull_from_git(session, idea, user)
+    sync_error = sync_state.error
+    if init and sync_state.file_missing and sync_error is None:
+        if not can_edit(role):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="Read-only access"
+            )
+        sync_error = await sync_init(session, idea, user)
+        await session.commit()
+        idea, _ = await resolve_idea(
+            session, idea_id, user, with_todos=True, fresh=True
+        )
+    owner = None if role == "owner" else await session.get(User, idea.user_id)
+    return _idea_out(idea, role, owner, sync_error)
 
 
 @router.patch("/{idea_id}", response_model=IdeaOut)
@@ -195,13 +263,30 @@ async def update_idea(
     data = payload.model_dump(exclude_unset=True)
     # position is per-user board ordering; only via /reorder.
     data.pop("position", None)
+    repo_changed = "github_repo" in data and data["github_repo"] != idea.github_repo
     for field, value in data.items():
         setattr(idea, field, value)
+    if repo_changed:
+        idea.github_file_sha = None
+        idea.git_synced_at = None
     await session.commit()
     idea, role = await resolve_idea(session, idea_id, user, with_todos=True)
     await notify_idea(session, idea_id, "updated")
+    sync_error = None
+    if idea.github_repo:
+        if repo_changed:
+            # Newly linked repo: adopt its IDEA.md if present (git wins). If
+            # absent, git_file_missing in the response prompts the user.
+            idea, sync_state = await _pull_from_git(session, idea, user)
+            sync_error = sync_state.error
+        else:
+            sync_error = await sync_push(
+                session, idea, user, f"Update idea: {idea.title}"
+            )
+            await session.commit()
+            idea, role = await resolve_idea(session, idea_id, user, with_todos=True)
     owner = None if role == "owner" else await session.get(User, idea.user_id)
-    return _idea_out(idea, role, owner)
+    return _idea_out(idea, role, owner, sync_error)
 
 
 @router.delete("/{idea_id}", status_code=status.HTTP_204_NO_CONTENT)

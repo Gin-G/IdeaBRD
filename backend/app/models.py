@@ -84,6 +84,11 @@ class Idea(Base):
     logo_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     # "owner/name" form, or null for note-only tiles
     github_repo: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Blob sha of IDEA.md at the last successful git sync (null = never synced)
+    github_file_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    git_synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     position: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

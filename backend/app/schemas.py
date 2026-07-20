@@ -90,6 +90,12 @@ class IdeaOut(IdeaBase):
     # The requesting user's role for this idea: owner | editor | viewer.
     role: str = "owner"
     owner: OwnerInfo | None = None
+    # Git sync state (repo-linked ideas): last successful IDEA.md sync, the
+    # error from the most recent attempt (not persisted; set per-request), and
+    # whether the repo has no IDEA.md yet (tracking awaits the user's opt-in).
+    git_synced_at: datetime | None = None
+    git_sync_error: str | None = None
+    git_file_missing: bool = False
 
 
 class IdeaSummary(BaseModel):
