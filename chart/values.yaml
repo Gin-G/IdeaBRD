@@ -36,7 +36,7 @@ backend:
   # at secretPath (else the ExternalSecret sync fails). Off by default.
   githubOAuth: false
   container:
-    image: docker.io/ncging/ideabrd-backend:2026-06-27.13.33
+    image: docker.io/ncging/ideabrd-backend:2026-07-20.21.24
     imagePullPolicy: Always
     port: 8000
     cpu: "500m"
