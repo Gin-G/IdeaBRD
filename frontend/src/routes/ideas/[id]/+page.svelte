@@ -118,7 +118,8 @@
 		</div>
 	{/if}
 
-	<div class="grid gap-6 lg:grid-cols-[1fr,20rem]">
+	<!-- Single column unless there's a repo to show alongside. -->
+	<div class="grid gap-6 {idea.github_repo ? 'lg:grid-cols-[1fr,20rem]' : ''}">
 		<!-- Main column -->
 		<div class="space-y-6">
 			<div class="card p-6">
@@ -205,19 +206,20 @@
 					<p class="mt-2 text-xs text-slate-500">Saved · syncs live</p>
 				{/if}
 			</div>
-		</div>
 
-		<!-- Side column -->
-		<div class="space-y-6">
+			<!-- Under the notes, where there's room for long items to wrap -->
 			<div class="card p-6">
 				<TodoList ideaId={idea.id} bind:todos={idea.todos} {canEdit} />
 			</div>
+		</div>
 
-			{#if idea.github_repo}
+		<!-- Side column -->
+		{#if idea.github_repo}
+			<div class="space-y-6">
 				<GitSyncPanel {idea} {canEdit} onsynced={(updated) => (idea = updated)} />
 				<GitHubPanel ideaId={idea.id} repo={idea.github_repo} />
-			{/if}
-		</div>
+			</div>
+		{/if}
 	</div>
 
 	{#if editing}

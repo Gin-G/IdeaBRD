@@ -53,7 +53,7 @@
 
 	<ul class="space-y-1.5">
 		{#each todos as todo (todo.id)}
-			<li class="group flex items-center gap-3 rounded-lg px-2 py-1.5 hover:bg-white/5">
+			<li class="group flex items-start gap-3 rounded-lg px-2 py-1.5 hover:bg-white/5">
 				<button
 					type="button"
 					role="checkbox"
@@ -73,14 +73,18 @@
 						>
 					{/if}
 				</button>
-				<span class="flex-1 text-sm {todo.done ? 'text-slate-500 line-through' : 'text-slate-200'}"
-					>{todo.text}</span
+				<!-- min-w-0 lets the item shrink (flex defaults to min-width:auto) so that
+				     break-words can wrap a long URL instead of overflowing the card. -->
+				<span
+					class="min-w-0 flex-1 break-words text-sm {todo.done
+						? 'text-slate-500 line-through'
+						: 'text-slate-200'}">{todo.text}</span
 				>
 				{#if canEdit}
 					<button
 						type="button"
 						aria-label="delete todo"
-						class="text-slate-500 opacity-0 transition hover:text-rose-400 group-hover:opacity-100"
+						class="shrink-0 text-slate-500 opacity-0 transition hover:text-rose-400 group-hover:opacity-100"
 						onclick={() => remove(todo)}>✕</button
 					>
 				{/if}

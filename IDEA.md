@@ -38,9 +38,9 @@ to-do replaces it rather than editing it in place.
 - [x] Idea-level collaboration with live sync
 - [x] Two-way git sync of idea details through IDEA.md
 - [x] Fix pulls leaving stale to-dos behind — the delete was never awaited, so items removed or reworded in the file came back as duplicates
+- [x] Move the to-do list below Notes and wrap long items, instead of squeezing it into the 20rem side column where it overflowed
 - [x] Helm chart deployed by Argo CD, secrets via ExternalSecrets/OpenBao
 - [ ] Fix repo links: `github_repo` is saved as typed, so full clone URLs get interpolated into hrefs and double up. Normalize to `owner/name` on write in `routers/ideas.py` and backfill existing rows; `github.normalize_repo` already does the parsing
-- [ ] Wrap long to-do text: the `flex-1` span in `TodoList.svelte` keeps `min-width: auto`, so long words overflow the card instead of wrapping. Add `min-w-0` + `break-words`, and `shrink-0` on the delete button
 - [ ] Drag-and-drop tile reordering — `PATCH /api/ideas/reorder` and the position columns already exist, so this is front-end only
 - [ ] Image upload for tile logos, which today accept only an emoji or an image URL
 - [ ] Give the CNPG cluster a backup target — it runs a single instance with no replica
