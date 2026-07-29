@@ -47,7 +47,8 @@ backend:
 db:
   name: ideabrd-db
   group: ideabrd
-  instances: 3
+  # Single instance: this is a demo board, not an HA workload. Raise for real redundancy.
+  instances: 1
   size: 10Gi
   # OpenBao path holding the superuser + app-user credentials
   secretPath: ideabrd/db
