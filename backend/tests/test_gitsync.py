@@ -146,6 +146,40 @@ async def test_get_pulls_from_git_and_git_wins(users, make_client):
 
 @pytest.mark.asyncio
 @respx.mock
+async def test_pull_drops_todos_removed_from_the_file(users, make_client):
+    """To-dos deleted or reworded in IDEA.md must not linger on the board.
+
+    Matching is by exact text, so a reworded item is a delete plus an insert —
+    if the delete is skipped the old row survives as a duplicate.
+    """
+    client = make_client(users["a"])
+    idea_id = await _create_tracked_idea(client, respx)
+
+    head = "---\nstatus: active\nprogress: 10\n---\n\n# Repo idea\n\n## Todos\n\n"
+    respx.get(CONTENTS).mock(
+        return_value=_file_response(
+            head + "- [x] keep me\n- [ ] rename me\n- [ ] drop me\n", sha="sha-2"
+        )
+    )
+    resp = await client.get(f"/api/ideas/{idea_id}")
+    assert [t["text"] for t in resp.json()["todos"]] == [
+        "keep me",
+        "rename me",
+        "drop me",
+    ]
+
+    respx.get(CONTENTS).mock(
+        return_value=_file_response(head + "- [x] keep me\n- [ ] renamed\n", sha="sha-3")
+    )
+    resp = await client.get(f"/api/ideas/{idea_id}")
+    assert [(t["text"], t["done"]) for t in resp.json()["todos"]] == [
+        ("keep me", True),
+        ("renamed", False),
+    ]
+
+
+@pytest.mark.asyncio
+@respx.mock
 async def test_get_adopts_existing_idea_file(users, make_client):
     """Linking a repo that already has an IDEA.md adopts it without prompting."""
     client = make_client(users["a"])

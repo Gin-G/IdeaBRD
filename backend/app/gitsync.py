@@ -67,7 +67,9 @@ def _render(idea: Idea) -> str:
     )
 
 
-def _apply_todos(session: AsyncSession, idea: Idea, parsed: list[tuple[str, bool]]) -> bool:
+async def _apply_todos(
+    session: AsyncSession, idea: Idea, parsed: list[tuple[str, bool]]
+) -> bool:
     """Make the idea's todos match the file, reusing rows by text to keep ids."""
     remaining = sorted(idea.todos, key=lambda t: (t.position, t.id))
     changed = False
@@ -84,12 +86,14 @@ def _apply_todos(session: AsyncSession, idea: Idea, parsed: list[tuple[str, bool
             session.add(Todo(idea_id=idea.id, text=text, done=done, position=pos))
             changed = True
     for leftover in remaining:
-        session.delete(leftover)
+        # AsyncSession.delete() is a coroutine — without the await the row survives
+        # and the file's removed to-dos come back as duplicates on the next pull.
+        await session.delete(leftover)
         changed = True
     return changed
 
 
-def _apply_file(session: AsyncSession, idea: Idea, text: str, sha: str) -> bool:
+async def _apply_file(session: AsyncSession, idea: Idea, text: str, sha: str) -> bool:
     """Overwrite the idea with the file's content (git wins)."""
     parsed = parse_idea_file(text)
     changed = False
@@ -105,7 +109,7 @@ def _apply_file(session: AsyncSession, idea: Idea, text: str, sha: str) -> bool:
     if parsed.progress is not None and parsed.progress != idea.progress:
         idea.progress = parsed.progress
         changed = True
-    changed = _apply_todos(session, idea, parsed.todos) or changed
+    changed = await _apply_todos(session, idea, parsed.todos) or changed
     idea.github_file_sha = sha
     idea.git_synced_at = datetime.now(timezone.utc)
     return changed
@@ -156,7 +160,7 @@ async def sync_pull(session: AsyncSession, idea: Idea, user: User) -> SyncStatus
         if sha == idea.github_file_sha:
             idea.git_synced_at = datetime.now(timezone.utc)
             return SyncStatus()
-        return SyncStatus(changed=_apply_file(session, idea, text, sha))
+        return SyncStatus(changed=await _apply_file(session, idea, text, sha))
     except GitHubError as exc:
         return SyncStatus(error=str(exc))
 
