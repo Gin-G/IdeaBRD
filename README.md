@@ -117,10 +117,11 @@ The chart's ExternalSecrets read from these KV paths (override via `values.yaml`
 |-----------------|------------|
 | `ideabrd/db`      | `dbsu`, `dbsupassw` (superuser), `dbuser`, `dbpassw` (app user) |
 | `ideabrd/backend` | `session_secret`, `google_client_id`, `google_client_secret`, `github_token` |
+| `ideabrd/github`  | `client_id`, `client_secret` (GitHub OAuth app) |
 
-To enable **GitHub login**, create a GitHub OAuth app (callback
-`https://<fqdn>/api/auth/github/callback`), add `github_client_id` + `github_client_secret` to
-`ideabrd/backend` in OpenBao, and set `backend.githubOAuth: true` in `values.yaml`. (The flag
+**GitHub login** needs a GitHub OAuth app (callback
+`https://<fqdn>/api/auth/github/callback`) whose `client_id` + `client_secret` live at
+`backend.githubSecretPath`, plus `backend.githubOAuth: true` in `values.yaml`. (The flag
 gates those two ExternalSecret keys — without the OpenBao values present the sync would fail.)
 
 > The app-user value at `ideabrd/db:dbuser` **must equal** `db.app.owner` in `values.yaml`

@@ -40,14 +40,15 @@ spec:
         key: {{ .Values.backend.secretPath }}
         property: github_token
     {{- if .Values.backend.githubOAuth }}
-    # GitHub OAuth app (user login + per-user repo access). Requires these properties
-    # to exist in OpenBao at backend.secretPath, else the whole ExternalSecret fails.
+    # GitHub OAuth app (user login + per-user repo access). Requires client_id and
+    # client_secret to exist in OpenBao at backend.githubSecretPath, else the whole
+    # ExternalSecret fails.
     - secretKey: GITHUB_CLIENT_ID
       remoteRef:
-        key: {{ .Values.backend.secretPath }}
-        property: github_client_id
+        key: {{ .Values.backend.githubSecretPath }}
+        property: client_id
     - secretKey: GITHUB_CLIENT_SECRET
       remoteRef:
-        key: {{ .Values.backend.secretPath }}
-        property: github_client_secret
+        key: {{ .Values.backend.githubSecretPath }}
+        property: client_secret
     {{- end }}
