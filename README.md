@@ -275,6 +275,5 @@ GitHub panel shows live stars/issues/last-push.
 
 ## Roadmap / deferred
 
-- Per-user GitHub OAuth (currently a single configured token for live data).
 - Image upload for logos (currently an emoji or image URL).
 - Drag-and-drop tile reordering (API + positions already in place).
