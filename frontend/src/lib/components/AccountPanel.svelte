@@ -93,8 +93,10 @@
 						<div class="truncate text-xs text-slate-400">
 							{#if github}
 								@{github.github_login}{github.has_repo_token ? ' · repo access' : ''}
-							{:else}
+							{:else if auth.providers.github}
 								Not linked
+							{:else}
+								Not configured on this server
 							{/if}
 						</div>
 					</div>
@@ -107,6 +109,12 @@
 						{/if}
 					{:else if auth.providers.github}
 						<button class="btn-ghost py-1 text-xs" onclick={connectGithub}>Connect</button>
+					{:else}
+						<span
+							class="text-xs text-slate-500"
+							title="Set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET on the backend to enable GitHub linking."
+							>Unavailable</span
+						>
 					{/if}
 				</div>
 			</div>
