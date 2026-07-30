@@ -81,10 +81,14 @@ def test_schema_normalizes_repo_on_write():
 @pytest.mark.asyncio
 @respx.mock
 async def test_create_idea_stores_normalized_repo(users, make_client):
-    # Creating a repo-linked idea tries to adopt its IDEA.md; keep that offline.
+    # Creating a repo-linked idea tries to adopt its IDEA.md and logo; keep
+    # both offline.
     respx.get(
         "https://api.github.com/repos/octocat/hello/contents/IDEA.md"
     ).mock(return_value=httpx.Response(404, json={"message": "Not Found"}))
+    respx.get("https://api.github.com/repos/octocat/hello/contents/").mock(
+        return_value=httpx.Response(200, json=[])
+    )
     client = make_client(users["a"])
     resp = await client.post(
         "/api/ideas",

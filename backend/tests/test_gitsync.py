@@ -9,6 +9,12 @@ from app.ideafile import parse_idea_file, render_idea_file
 
 BASE = "https://api.github.com"
 CONTENTS = f"{BASE}/repos/octocat/hello/contents/IDEA.md"
+# Every pull also lists the repo root, looking for a tile logo (see test_logo_sync).
+ROOT = f"{BASE}/repos/octocat/hello/contents/"
+
+
+def _no_repo_logo() -> None:
+    respx.get(ROOT).mock(return_value=httpx.Response(200, json=[]))
 
 
 def _file_response(text: str, sha: str = "sha-1") -> httpx.Response:
@@ -67,6 +73,7 @@ async def _create_tracked_idea(client, respx_mock) -> int:
     respx_mock.get(CONTENTS).mock(
         return_value=httpx.Response(404, json={"message": "Not Found"})
     )
+    _no_repo_logo()
     respx_mock.put(CONTENTS).mock(
         return_value=httpx.Response(201, json={"content": {"sha": "seed-sha"}})
     )
@@ -89,6 +96,7 @@ async def test_create_prompts_instead_of_seeding(users, make_client):
     respx.get(CONTENTS).mock(
         return_value=httpx.Response(404, json={"message": "Not Found"})
     )
+    _no_repo_logo()
     put_route = respx.put(CONTENTS).mock(
         return_value=httpx.Response(201, json={"content": {"sha": "seed-sha"}})
     )
@@ -186,6 +194,7 @@ async def test_get_adopts_existing_idea_file(users, make_client):
     respx.get(CONTENTS).mock(
         return_value=_file_response("# From the repo\n\nrepo notes", sha="repo-sha")
     )
+    _no_repo_logo()
     resp = await client.post(
         "/api/ideas", json={"title": "temp", "github_repo": "octocat/hello"}
     )

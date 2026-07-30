@@ -199,7 +199,8 @@ When neither Google nor GitHub is configured, a built-in **dev login** is used (
 - **identities** — (provider `google`/`github`, subject) → user; GitHub token for repo access
 - **ideas** — title, notes (markdown), status (`idea`/`active`/`paused`/`done`), progress,
   color, logo, optional `github_repo`, grid position, git sync state (`github_file_sha`,
-  `git_synced_at`)
+  `git_synced_at`, `github_logo_path`, `github_logo_sha`)
+- **idea_logos** — uploaded/synced tile image bytes, one row per idea
 - **todos** — text, done, position (belong to an idea)
 - **idea_collaborators** — (idea, user, role `editor`/`viewer`, per-user board position)
 - **idea_invitations** — pending invites by email (claimed on first login)
@@ -255,6 +256,23 @@ Free-form markdown notes.
   stay database-only until then.
 - Sync is best-effort: GitHub errors are reported in the tile (`git_sync_error`) and never
   block the app. Push conflicts (stale sha) retry once against the current file.
+
+### Tile logos in git (`idea_logo.<ext>`)
+
+The tile image is repo content too, stored at the repo root next to `IDEA.md` as
+`idea_logo.png` / `.jpg` / `.gif` / `.webp`:
+
+- **Pull** — every sync lists the repo root and adopts an `idea_logo.*` it finds, caching the
+  bytes in `idea_logos` and pointing `logo_url` at `/api/ideas/{id}/logo?v=<blob sha>`. So a
+  repo carries its own artwork: link it (or drop the file in by hand) and the tile builds
+  itself, for whoever links it. The blob is only downloaded when its sha changes, and images
+  over 1MB are skipped.
+- **Push** — uploading an image in the app commits it to the repo, subject to the same opt-in
+  gate as `IDEA.md`: an untracked repo gets no file. Uploading a different format replaces the
+  old file rather than leaving two behind.
+- **Delete** — removing the logo in the app commits the file's deletion, and a logo deleted in
+  git clears the tile on the next pull. A logo that git never had (uploaded while the repo was
+  untracked) is left alone.
 
 ---
 

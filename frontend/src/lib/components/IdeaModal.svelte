@@ -150,6 +150,13 @@
 						{/if}
 						<span class="text-xs text-slate-500">PNG, JPEG, GIF or WebP · up to 1MB</span>
 					</div>
+					{#if idea.github_repo && !idea.git_file_missing}
+						<p class="mt-1.5 text-xs text-slate-500">
+							Committed to <span class="font-mono text-slate-400">{idea.github_repo}</span> as
+							<span class="font-mono text-slate-400">idea_logo.*</span>, so the tile is rebuilt from
+							the repo wherever it's linked.
+						</p>
+					{/if}
 				{:else}
 					<p class="mt-1.5 text-xs text-slate-500">
 						Create the idea first to upload an image.

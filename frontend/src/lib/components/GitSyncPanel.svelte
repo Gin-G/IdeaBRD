@@ -79,6 +79,8 @@
 				class="font-mono text-indigo-300 hover:text-indigo-200">IDEA.md</a
 			>
 			— git is the source of truth. Edits here commit to the repo; edits in the repo show up here.
+			The tile image travels with it as
+			<span class="font-mono text-slate-300">idea_logo.*</span>.
 		</p>
 		{#if syncError}
 			<p class="mt-2 rounded-lg bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{syncError}</p>
