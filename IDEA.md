@@ -5,30 +5,38 @@ progress: 95
 
 # IdeaBRD
 
+<!--
+IdeaBRD parses this file. It is the source of truth for this idea's tile:
+the app re-reads it on every open and commits its own edits back here, so
+the shape below matters more than it looks. Anything the parser
+(backend/app/ideafile.py) can't read is dropped silently.
+
+  frontmatter  status: one of idea, active, paused, done. progress: 0-100.
+               Any other key is ignored.
+  # heading    The idea title (first H1).
+  prose        Everything outside the Todos section becomes the tile's
+               notes, shown on the board — so keep it short. Documentation
+               written here is published, not filed away.
+  ## Todos     That heading exactly (or "## To-Dos"); "## ToDo", "## TODO"
+               and "## Tasks" do not match and the whole list is lost.
+               Inside it, only "- [ ] open" / "- [x] done" lines survive:
+               sub-headings and blank-line grouping are discarded, and a
+               wrapped item is cut at the line break, so keep each to-do on
+               one line. The next "## " heading ends the list.
+
+To-dos are matched to the board by exact text, so rewording one replaces it
+rather than editing it in place — expect a checked item to come back
+unchecked if you reword it.
+
+HTML comments are stripped on read, so this block never reaches the board.
+-->
+
 A personal idea board: each idea is a tile with notes, a to-do list, progress
 tracking and live GitHub data for repo-linked projects. FastAPI + async
 SQLAlchemy on Postgres (CNPG), SvelteKit + Tailwind front end, deployed to
 Kubernetes by Argo CD with secrets from OpenBao. Backend lives in `backend/app`,
 the UI in `frontend/src`, the chart in `chart/`; `docker-compose.yml` runs the
 whole stack locally and `backend/tests` holds the pytest suite.
-
-## Editing this file
-
-This file is the source of truth for the idea's details. IdeaBRD re-reads it
-every time the idea is opened and overwrites its own copy, so an edit here
-appears on the board within a page load — and edits made in the app are
-committed back here. Keep the shape below, because the parser
-(`backend/app/ideafile.py`) silently discards anything it cannot read:
-
-- `status:` must be one of `idea`, `active`, `paused`, `done`; `progress:` is an
-  integer 0-100. Other frontmatter keys are ignored.
-- The `# ` heading is the idea title. Prose under it becomes the notes shown on
-  the board — including this section, so keep it brief.
-- To-dos go under a `## Todos` heading as `- [ ]` / `- [x]` lines. Non-item
-  lines in that section are dropped, and a later `## ` heading ends the list.
-
-Items are matched back to existing rows by their exact text, so rewording a
-to-do replaces it rather than editing it in place.
 
 ## Todos
 
@@ -44,3 +52,4 @@ to-do replaces it rather than editing it in place.
 - [x] Drag-and-drop tile reordering on the board, with Alt+arrow as the keyboard equivalent
 - [x] Image upload for tile logos, stored in Postgres and served from `/api/ideas/{id}/logo`
 - [x] Track the tile logo in git as `idea_logo.<ext>` beside IDEA.md, so a linked repo carries its own artwork and any board that links it builds the tile from the repo
+- [x] Write the IDEA.md format rules into every file as a stripped-on-read HTML comment, with the `## Todos` heading always present — a seeded stub was the whole spec its next editor saw, and the rules only existed in this repo

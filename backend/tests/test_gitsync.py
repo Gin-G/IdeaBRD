@@ -48,6 +48,49 @@ def test_render_parse_round_trip():
     assert parsed.todos == [("set up repo", True), ("build MVP", False)]
 
 
+def test_rendered_file_documents_its_own_format():
+    """A seeded file has to teach its own rules — it's all the next editor sees.
+
+    The two things that silently cost a whole list: guessing the heading name,
+    and not knowing the section exists at all.
+    """
+    text = render_idea_file(
+        title="Fresh", notes="", status="idea", progress=0, todos=[]
+    )
+    assert "## Todos" in text  # present even with nothing in it
+    assert "<!--" in text and "-->" in text
+    for rule in ("## ToDo", "exact text", "one line", "the board"):
+        assert rule in text
+
+    # ...and none of it leaks onto the board or into the list.
+    parsed = parse_idea_file(text)
+    assert parsed.title == "Fresh"
+    assert parsed.notes == ""
+    assert parsed.todos == []
+    # Re-rendering what we parsed reproduces the file, so guidance doesn't
+    # accumulate or churn the sha across pull/push cycles.
+    assert (
+        render_idea_file(
+            title=parsed.title,
+            notes=parsed.notes,
+            status="idea",
+            progress=0,
+            todos=parsed.todos,
+        )
+        == text
+    )
+
+
+def test_comments_are_stripped_not_stored():
+    """Comments must vanish wherever they sit — including "- [ ]" inside them."""
+    parsed = parse_idea_file(
+        "# T\n\n<!-- multi\nline\n- [ ] not a real todo\n-->\n\nreal notes\n"
+        "<!-- inline -->\n\n## Todos\n\n<!-- ignore me -->\n- [x] real\n"
+    )
+    assert parsed.notes == "real notes"
+    assert parsed.todos == [("real", True)]
+
+
 def test_parse_lenient():
     # No frontmatter, no title, stray text in the todos section, later section.
     parsed = parse_idea_file(
@@ -125,6 +168,9 @@ async def test_create_prompts_instead_of_seeding(users, make_client):
     content = _pushed_content(put_route.calls.last.request)
     assert "# Repo idea" in content
     assert "still local" in content
+    # The seeded file is the whole spec for whoever edits it next.
+    assert "## Todos" in content
+    assert "<!--" in content
     assert "IdeaBRD" in json.loads(put_route.calls.last.request.read())["message"]
 
 
