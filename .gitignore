@@ -24,3 +24,6 @@ dist/
 .idea/
 .vscode/
 *.swp
+
+# pytest sqlite scratch database
+test_ideabrd.db

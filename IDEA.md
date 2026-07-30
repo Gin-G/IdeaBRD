@@ -1,6 +1,6 @@
 ---
 status: active
-progress: 70
+progress: 95
 ---
 
 # IdeaBRD
@@ -40,7 +40,6 @@ to-do replaces it rather than editing it in place.
 - [x] Fix pulls leaving stale to-dos behind — the delete was never awaited, so items removed or reworded in the file came back as duplicates
 - [x] Move the to-do list below Notes and wrap long items, instead of squeezing it into the 20rem side column where it overflowed
 - [x] Helm chart deployed by Argo CD, secrets via ExternalSecrets/OpenBao
-- [ ] Fix repo links: `github_repo` is saved as typed, so full clone URLs get interpolated into hrefs and double up. Normalize to `owner/name` on write in `routers/ideas.py` and backfill existing rows; `github.normalize_repo` already does the parsing
-- [ ] Drag-and-drop tile reordering — `PATCH /api/ideas/reorder` and the position columns already exist, so this is front-end only
-- [ ] Image upload for tile logos, which today accept only an emoji or an image URL
-- [ ] Give the CNPG cluster a backup target — it runs a single instance with no replica
+- [x] Normalize `github_repo` to `owner/name` on write, so repo links stop doubling up, and backfill the rows that stored a full clone URL
+- [x] Drag-and-drop tile reordering on the board, with Alt+arrow as the keyboard equivalent
+- [x] Image upload for tile logos, stored in Postgres and served from `/api/ideas/{id}/logo`

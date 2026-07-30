@@ -4,12 +4,40 @@
 	import StatusBadge from './StatusBadge.svelte';
 	import TileLogo from './TileLogo.svelte';
 
-	let { idea }: { idea: IdeaSummary } = $props();
+	// Drag handlers land on the anchor itself: it is already focusable and
+	// natively draggable, so reordering needs no extra wrapper element.
+	let {
+		idea,
+		draggable = false,
+		dragging = false,
+		ondragstart,
+		ondragover,
+		ondragend,
+		ondrop,
+		onkeydown
+	}: {
+		idea: IdeaSummary;
+		draggable?: boolean;
+		dragging?: boolean;
+		ondragstart?: (e: DragEvent) => void;
+		ondragover?: (e: DragEvent) => void;
+		ondragend?: (e: DragEvent) => void;
+		ondrop?: (e: DragEvent) => void;
+		onkeydown?: (e: KeyboardEvent) => void;
+	} = $props();
 </script>
 
 <a
 	href="/ideas/{idea.id}"
-	class="card group flex h-full flex-col gap-4 p-5 transition-all hover:-translate-y-0.5 hover:border-white/20 hover:bg-white/[0.06]"
+	{draggable}
+	{ondragstart}
+	{ondragover}
+	{ondragend}
+	{ondrop}
+	{onkeydown}
+	class="card group flex h-full flex-col gap-4 p-5 transition-all hover:-translate-y-0.5 hover:border-white/20 hover:bg-white/[0.06] {draggable
+		? 'cursor-grab active:cursor-grabbing'
+		: ''} {dragging ? 'opacity-40' : ''}"
 >
 	<div class="flex items-start gap-3">
 		<TileLogo logo={idea.logo_url} title={idea.title} color={idea.color} />

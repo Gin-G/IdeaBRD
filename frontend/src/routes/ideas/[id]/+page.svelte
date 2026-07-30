@@ -223,7 +223,12 @@
 	</div>
 
 	{#if editing}
-		<IdeaModal {idea} onsave={saveMeta} oncancel={() => (editing = false)} />
+		<IdeaModal
+			{idea}
+			onsave={saveMeta}
+			onlogo={(updated) => (idea = updated)}
+			oncancel={() => (editing = false)}
+		/>
 	{/if}
 	{#if sharing}
 		<CollaboratorsPanel ideaId={idea.id} canManage={isOwner} onclose={() => (sharing = false)} />

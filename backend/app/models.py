@@ -7,6 +7,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    LargeBinary,
     SmallInteger,
     String,
     Text,
@@ -109,6 +110,30 @@ class Idea(Base):
     invitations: Mapped[list[IdeaInvitation]] = relationship(
         back_populates="idea", cascade="all, delete-orphan"
     )
+    logo: Mapped[IdeaLogo | None] = relationship(
+        back_populates="idea", cascade="all, delete-orphan", uselist=False
+    )
+
+
+class IdeaLogo(Base):
+    """An uploaded tile logo, kept out of the ideas row so board listings stay light.
+
+    Postgres is the only storage this deployment has; images are capped at a
+    size where a bytea column is the pragmatic home for them.
+    """
+
+    __tablename__ = "idea_logos"
+
+    idea_id: Mapped[int] = mapped_column(
+        ForeignKey("ideas.id", ondelete="CASCADE"), primary_key=True
+    )
+    content_type: Mapped[str] = mapped_column(String(100))
+    data: Mapped[bytes] = mapped_column(LargeBinary)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    idea: Mapped[Idea] = relationship(back_populates="logo")
 
 
 class Todo(Base):

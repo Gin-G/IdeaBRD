@@ -6,7 +6,8 @@
 		size = 'md'
 	}: { logo?: string | null; title?: string; color?: string; size?: 'md' | 'lg' } = $props();
 
-	const isUrl = $derived(!!logo && /^https?:\/\//.test(logo));
+	// Either an external URL or an app-relative path (an uploaded logo).
+	const isUrl = $derived(!!logo && /^(https?:\/\/|\/)/.test(logo));
 	const fallback = $derived(title.trim().charAt(0).toUpperCase() || '◆');
 	const box = $derived(size === 'lg' ? 'h-14 w-14 text-2xl' : 'h-11 w-11 text-xl');
 </script>

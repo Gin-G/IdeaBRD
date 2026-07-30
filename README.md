@@ -275,5 +275,4 @@ GitHub panel shows live stars/issues/last-push.
 
 ## Roadmap / deferred
 
-- Image upload for logos (currently an emoji or image URL).
-- Drag-and-drop tile reordering (API + positions already in place).
+- Backups for the Postgres cluster (it runs a single CNPG instance, no replica).

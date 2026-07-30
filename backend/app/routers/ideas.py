@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import hashlib
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,7 +16,7 @@ from app.access import (
 from app.auth import get_current_user
 from app.db import get_session
 from app.gitsync import SyncStatus, sync_init, sync_pull, sync_push
-from app.models import Idea, IdeaCollaborator, IdeaInvitation, User
+from app.models import Idea, IdeaCollaborator, IdeaInvitation, IdeaLogo, User
 from app.realtime import notify_idea
 from app.schemas import (
     IdeaCreate,
@@ -306,3 +309,104 @@ async def delete_idea(
     await session.delete(idea)
     await session.commit()
     await notify_idea(session, idea_id, "deleted", member_ids=member_ids)
+
+
+# ---- Tile logo upload ----
+
+# Raster formats only: an SVG is a script-execution vector when served back.
+ALLOWED_LOGO_TYPES = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/gif": "gif",
+    "image/webp": "webp",
+}
+MAX_LOGO_BYTES = 1024 * 1024
+
+
+@router.put("/{idea_id}/logo", response_model=IdeaOut)
+async def upload_logo(
+    idea_id: int,
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Store an uploaded image as the tile logo and point logo_url at it."""
+    idea, role = await resolve_idea(session, idea_id, user, with_todos=True)
+    if idea is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Idea not found")
+    if not can_edit(role):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Read-only access")
+    if file.content_type not in ALLOWED_LOGO_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=f"Unsupported image type: {file.content_type or 'unknown'}",
+        )
+    data = await file.read(MAX_LOGO_BYTES + 1)
+    if len(data) > MAX_LOGO_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail="Image must be 1MB or smaller",
+        )
+    if not data:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty upload")
+
+    existing = await session.get(IdeaLogo, idea_id)
+    if existing is None:
+        session.add(
+            IdeaLogo(idea_id=idea_id, content_type=file.content_type, data=data)
+        )
+    else:
+        existing.content_type = file.content_type
+        existing.data = data
+    # Version the URL so replacing an image busts any cached copy. Keyed on the
+    # content rather than the clock: a wall-clock stamp collides for two uploads
+    # in the same second, which with a year-long max-age pins the stale image.
+    idea.logo_url = f"/api/ideas/{idea_id}/logo?v={hashlib.sha256(data).hexdigest()[:16]}"
+    await session.commit()
+    idea, role = await resolve_idea(session, idea_id, user, with_todos=True)
+    await notify_idea(session, idea_id, "updated")
+    owner = None if role == "owner" else await session.get(User, idea.user_id)
+    return _idea_out(idea, role, owner)
+
+
+@router.get("/{idea_id}/logo")
+async def get_logo(
+    idea_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Serve the uploaded logo. Readable by anyone who can see the idea."""
+    idea, role = await resolve_idea(session, idea_id, user)
+    if idea is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Idea not found")
+    logo = await session.get(IdeaLogo, idea_id)
+    if logo is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No logo")
+    return Response(
+        content=logo.data,
+        media_type=logo.content_type,
+        # Safe to cache hard: logo_url carries a version query that changes on replace.
+        headers={"Cache-Control": "private, max-age=31536000"},
+    )
+
+
+@router.delete("/{idea_id}/logo", response_model=IdeaOut)
+async def delete_logo(
+    idea_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    idea, role = await resolve_idea(session, idea_id, user, with_todos=True)
+    if idea is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Idea not found")
+    if not can_edit(role):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Read-only access")
+    logo = await session.get(IdeaLogo, idea_id)
+    if logo is not None:
+        await session.delete(logo)
+    idea.logo_url = None
+    await session.commit()
+    idea, role = await resolve_idea(session, idea_id, user, with_todos=True)
+    await notify_idea(session, idea_id, "updated")
+    owner = None if role == "owner" else await session.get(User, idea.user_id)
+    return _idea_out(idea, role, owner)

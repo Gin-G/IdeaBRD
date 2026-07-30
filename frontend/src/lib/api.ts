@@ -22,9 +22,14 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+	// A FormData body must set its own multipart boundary, so don't force JSON on it.
+	const isForm = init.body instanceof FormData;
 	const res = await fetch(`${BASE}${path}`, {
 		credentials: 'include',
-		headers: { 'Content-Type': 'application/json', ...(init.headers ?? {}) },
+		headers: {
+			...(isForm ? {} : { 'Content-Type': 'application/json' }),
+			...(init.headers ?? {})
+		},
 		...init
 	});
 
@@ -93,6 +98,15 @@ export const api = {
 		request<void>(`/api/todos/${todoId}`, { method: 'DELETE' }),
 
 	github: (ideaId: number) => request<GitHubRepo>(`/api/ideas/${ideaId}/github`),
+
+	/** Upload a tile logo. No Content-Type header: the browser sets the multipart boundary. */
+	uploadLogo: (ideaId: number, file: File) => {
+		const body = new FormData();
+		body.append('file', file);
+		return request<Idea>(`/api/ideas/${ideaId}/logo`, { method: 'PUT', body });
+	},
+	deleteLogo: (ideaId: number) =>
+		request<Idea>(`/api/ideas/${ideaId}/logo`, { method: 'DELETE' }),
 
 	listCollaborators: (ideaId: number) =>
 		request<Collaborator[]>(`/api/ideas/${ideaId}/collaborators`),

@@ -7,12 +7,12 @@ import time
 import httpx
 
 from app.config import settings
+from app.repo_ref import InvalidRepoRef
+from app.repo_ref import normalize_repo as _normalize_repo
 from app.schemas import GitHubRepoOut
 
 _CACHE_TTL_SECONDS = 300
 _cache: dict[str, tuple[float, GitHubRepoOut]] = {}
-
-_REPO_RE = re.compile(r"^[\w.-]+/[\w.-]+$")
 
 
 class GitHubError(Exception):
@@ -24,14 +24,14 @@ class GitHubError(Exception):
 
 
 def normalize_repo(repo: str) -> str:
-    """Accept 'owner/name' or a full GitHub URL and return 'owner/name'."""
-    repo = repo.strip()
-    match = re.search(r"github\.com[/:]([\w.-]+/[\w.-]+?)(?:\.git)?/?$", repo)
-    if match:
-        repo = match.group(1)
-    if not _REPO_RE.match(repo):
-        raise GitHubError(f"Invalid repo reference: {repo!r}", status_code=400)
-    return repo
+    """Accept 'owner/name' or a full GitHub URL and return 'owner/name'.
+
+    Wraps the shared parser so API callers keep seeing a GitHubError.
+    """
+    try:
+        return _normalize_repo(repo)
+    except InvalidRepoRef as exc:
+        raise GitHubError(str(exc), status_code=400) from exc
 
 
 def _headers(token: str | None = None) -> dict[str, str]:

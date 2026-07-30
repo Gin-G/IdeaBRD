@@ -1,16 +1,20 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
+	import { api, ApiError } from '$lib/api';
 	import { STATUSES, type Idea, type Status } from '$lib/types';
 	import TileLogo from './TileLogo.svelte';
 
 	let {
 		idea = null,
 		onsave,
-		oncancel
+		oncancel,
+		onlogo
 	}: {
 		idea?: Idea | null;
 		onsave: (data: Partial<Idea>) => void;
 		oncancel: () => void;
+		/** Uploads persist immediately (they need an id), so the parent is told directly. */
+		onlogo?: (idea: Idea) => void;
 	} = $props();
 
 	const PALETTE = ['#6366f1', '#ec4899', '#f59e0b', '#10b981', '#06b6d4', '#ef4444', '#8b5cf6'];
@@ -23,6 +27,43 @@
 	let logo = $state(init?.logo_url ?? '');
 	let repo = $state(init?.github_repo ?? '');
 	let saving = $state(false);
+	let uploading = $state(false);
+	let uploadError = $state('');
+
+	const uploaded = $derived(logo.startsWith('/api/'));
+
+	async function pickLogo(e: Event) {
+		const input = e.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		input.value = ''; // so the same file can be re-picked after a failure
+		if (!file || !idea) return;
+		uploading = true;
+		uploadError = '';
+		try {
+			const updated = await api.uploadLogo(idea.id, file);
+			logo = updated.logo_url ?? '';
+			onlogo?.(updated);
+		} catch (err) {
+			uploadError = err instanceof ApiError ? err.message : 'Upload failed';
+		} finally {
+			uploading = false;
+		}
+	}
+
+	async function clearLogo() {
+		if (!idea) return;
+		uploading = true;
+		uploadError = '';
+		try {
+			const updated = await api.deleteLogo(idea.id);
+			logo = '';
+			onlogo?.(updated);
+		} catch (err) {
+			uploadError = err instanceof ApiError ? err.message : 'Could not remove the image';
+		} finally {
+			uploading = false;
+		}
+	}
 
 	function submit(e: SubmitEvent) {
 		e.preventDefault();
@@ -85,9 +126,36 @@
 
 			<div>
 				<label class="mb-1 block text-xs font-medium text-slate-400" for="logo"
-					>Logo (emoji or image URL)</label
+					>Logo (emoji, image URL, or an upload)</label
 				>
 				<input id="logo" class="input" bind:value={logo} placeholder="🚀  or  https://…/logo.png" />
+				{#if idea}
+					<div class="mt-2 flex flex-wrap items-center gap-3">
+						<label class="btn-ghost cursor-pointer py-1 text-xs">
+							<input
+								type="file"
+								accept="image/png,image/jpeg,image/gif,image/webp"
+								class="hidden"
+								disabled={uploading}
+								onchange={pickLogo}
+							/>
+							{uploading ? 'Uploading…' : uploaded ? 'Replace image' : 'Upload image'}
+						</label>
+						{#if uploaded}
+							<button
+								type="button"
+								class="text-xs text-slate-500 hover:text-rose-400"
+								onclick={clearLogo}>Remove</button
+							>
+						{/if}
+						<span class="text-xs text-slate-500">PNG, JPEG, GIF or WebP · up to 1MB</span>
+					</div>
+				{:else}
+					<p class="mt-1.5 text-xs text-slate-500">
+						Create the idea first to upload an image.
+					</p>
+				{/if}
+				{#if uploadError}<p class="mt-1.5 text-xs text-rose-300">{uploadError}</p>{/if}
 			</div>
 
 			<div>

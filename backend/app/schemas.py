@@ -2,7 +2,19 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.repo_ref import InvalidRepoRef, normalize_repo
+
+
+def _normalized_repo(value: str | None) -> str | None:
+    """Store repos as 'owner/name'; treat blank as unlinked."""
+    if value is None or not value.strip():
+        return None
+    try:
+        return normalize_repo(value)
+    except InvalidRepoRef as exc:
+        raise ValueError(str(exc)) from exc
 
 
 class UserOut(BaseModel):
@@ -57,6 +69,8 @@ class IdeaBase(BaseModel):
     logo_url: str | None = None
     github_repo: str | None = None
 
+    _normalize_github_repo = field_validator("github_repo")(_normalized_repo)
+
 
 class IdeaCreate(IdeaBase):
     pass
@@ -71,6 +85,8 @@ class IdeaUpdate(BaseModel):
     logo_url: str | None = None
     github_repo: str | None = None
     position: int | None = None
+
+    _normalize_github_repo = field_validator("github_repo")(_normalized_repo)
 
 
 class OwnerInfo(BaseModel):

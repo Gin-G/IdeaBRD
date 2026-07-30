@@ -12,6 +12,9 @@
 	let error = $state('');
 	let showModal = $state(false);
 
+	let dragIndex = $state<number | null>(null);
+	let savingOrder = $state(false);
+
 	async function load() {
 		try {
 			ideas = await api.listIdeas();
@@ -26,8 +29,66 @@
 	onMount(() => {
 		load();
 		// Any live event may affect the board (shares, edits, deletes); just refetch.
-		return onRealtime(() => load());
+		return onRealtime(() => {
+			// Refetching mid-drag, or before the new order is saved, snaps tiles back.
+			if (dragIndex !== null || savingOrder) return;
+			load();
+		});
 	});
+
+	function moveTile(from: number, to: number) {
+		if (from === to || to < 0 || to >= ideas.length) return;
+		const next = [...ideas];
+		const [moved] = next.splice(from, 1);
+		next.splice(to, 0, moved);
+		ideas = next;
+	}
+
+	/** Persist the current order as positions 0..n-1 (the board sorts by position). */
+	async function persistOrder() {
+		savingOrder = true;
+		try {
+			await api.reorderIdeas(ideas.map((idea, i) => ({ id: idea.id, position: i })));
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to save the new order';
+			await load(); // fall back to whatever the server still has
+		} finally {
+			savingOrder = false;
+		}
+	}
+
+	function dragStart(e: DragEvent, i: number) {
+		dragIndex = i;
+		if (e.dataTransfer) {
+			e.dataTransfer.effectAllowed = 'move';
+			// Firefox refuses to start a drag unless dataTransfer carries something.
+			e.dataTransfer.setData('text/plain', String(ideas[i].id));
+		}
+	}
+
+	function dragOver(e: DragEvent, i: number) {
+		if (dragIndex === null) return;
+		e.preventDefault(); // marks this a valid drop target
+		if (dragIndex === i) return;
+		moveTile(dragIndex, i);
+		dragIndex = i; // the dragged tile now lives here
+	}
+
+	async function dragEnd() {
+		if (dragIndex === null) return;
+		dragIndex = null;
+		await persistOrder();
+	}
+
+	/** Keyboard equivalent of a drag, for anyone not using a pointer. */
+	async function nudge(e: KeyboardEvent, i: number) {
+		if (!e.altKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+		const to = e.key === 'ArrowLeft' ? i - 1 : i + 1;
+		if (to < 0 || to >= ideas.length) return;
+		e.preventDefault();
+		moveTile(i, to);
+		await persistOrder();
+	}
 
 	async function create(data: Partial<Idea>) {
 		const created = await api.createIdea(data);
@@ -42,6 +103,12 @@
 		<p class="mt-1 text-sm text-slate-400">
 			{ideas.length}
 			{ideas.length === 1 ? 'idea' : 'ideas'} in flight
+			{#if ideas.length > 1}
+				<span class="text-slate-500"
+					>· drag to reorder, or <kbd class="font-sans">Alt</kbd> +
+					<kbd class="font-sans">←</kbd>/<kbd class="font-sans">→</kbd></span
+				>
+			{/if}
 		</p>
 	</div>
 	<button class="btn-primary" onclick={() => (showModal = true)}>
@@ -68,8 +135,17 @@
 	</div>
 {:else}
 	<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-		{#each ideas as idea (idea.id)}
-			<Tile {idea} />
+		{#each ideas as idea, i (idea.id)}
+			<Tile
+				{idea}
+				draggable
+				dragging={dragIndex === i}
+				ondragstart={(e) => dragStart(e, i)}
+				ondragover={(e) => dragOver(e, i)}
+				ondragend={dragEnd}
+				ondrop={(e) => e.preventDefault()}
+				onkeydown={(e) => nudge(e, i)}
+			/>
 		{/each}
 		<button
 			class="card grid min-h-40 place-items-center border-dashed text-slate-400 transition-colors hover:border-white/30 hover:text-slate-200"
