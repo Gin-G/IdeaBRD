@@ -15,7 +15,15 @@ from app.access import (
 )
 from app.auth import get_current_user
 from app.db import get_session
-from app.gitsync import SyncStatus, sync_init, sync_pull, sync_push
+from app.gitsync import (
+    SyncStatus,
+    sync_init,
+    sync_logo_delete,
+    sync_logo_push,
+    sync_pull,
+    sync_push,
+)
+from app.logos import ALLOWED_LOGO_TYPES, MAX_LOGO_BYTES
 from app.models import Idea, IdeaCollaborator, IdeaInvitation, IdeaLogo, User
 from app.realtime import notify_idea
 from app.schemas import (
@@ -272,6 +280,10 @@ async def update_idea(
     if repo_changed:
         idea.github_file_sha = None
         idea.git_synced_at = None
+        # The old repo's logo tracking doesn't carry over; the pull below
+        # adopts the new repo's image if it has one.
+        idea.github_logo_path = None
+        idea.github_logo_sha = None
     await session.commit()
     idea, role = await resolve_idea(session, idea_id, user, with_todos=True)
     await notify_idea(session, idea_id, "updated")
@@ -313,15 +325,6 @@ async def delete_idea(
 
 # ---- Tile logo upload ----
 
-# Raster formats only: an SVG is a script-execution vector when served back.
-ALLOWED_LOGO_TYPES = {
-    "image/png": "png",
-    "image/jpeg": "jpg",
-    "image/gif": "gif",
-    "image/webp": "webp",
-}
-MAX_LOGO_BYTES = 1024 * 1024
-
 
 @router.put("/{idea_id}/logo", response_model=IdeaOut)
 async def upload_logo(
@@ -330,7 +333,11 @@ async def upload_logo(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    """Store an uploaded image as the tile logo and point logo_url at it."""
+    """Store an uploaded image as the tile logo and point logo_url at it.
+
+    Repo-linked ideas that are already tracked also get the image committed as
+    idea_logo.<ext>, so the tile is reproducible from the repo alone.
+    """
     idea, role = await resolve_idea(session, idea_id, user, with_todos=True)
     if idea is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Idea not found")
@@ -362,11 +369,12 @@ async def upload_logo(
     # content rather than the clock: a wall-clock stamp collides for two uploads
     # in the same second, which with a year-long max-age pins the stale image.
     idea.logo_url = f"/api/ideas/{idea_id}/logo?v={hashlib.sha256(data).hexdigest()[:16]}"
+    sync_error = await sync_logo_push(session, idea, user, data, file.content_type)
     await session.commit()
     idea, role = await resolve_idea(session, idea_id, user, with_todos=True)
     await notify_idea(session, idea_id, "updated")
     owner = None if role == "owner" else await session.get(User, idea.user_id)
-    return _idea_out(idea, role, owner)
+    return _idea_out(idea, role, owner, sync_error)
 
 
 @router.get("/{idea_id}/logo")
@@ -405,8 +413,10 @@ async def delete_logo(
     if logo is not None:
         await session.delete(logo)
     idea.logo_url = None
+    # Remove it from the repo too, or the next pull adopts it straight back.
+    sync_error = await sync_logo_delete(session, idea, user)
     await session.commit()
     idea, role = await resolve_idea(session, idea_id, user, with_todos=True)
     await notify_idea(session, idea_id, "updated")
     owner = None if role == "owner" else await session.get(User, idea.user_id)
-    return _idea_out(idea, role, owner)
+    return _idea_out(idea, role, owner, sync_error)

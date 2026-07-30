@@ -87,6 +87,10 @@ class Idea(Base):
     github_repo: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # Blob sha of IDEA.md at the last successful git sync (null = never synced)
     github_file_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Repo path and blob sha of the synced tile logo, e.g. "idea_logo.png".
+    # Both null = the logo (if any) is app-only and not tracked in the repo.
+    github_logo_path: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    github_logo_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
     git_synced_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

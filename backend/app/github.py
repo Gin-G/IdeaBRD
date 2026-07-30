@@ -128,10 +128,84 @@ async def get_file(
             await client.aclose()
 
 
+async def list_dir(
+    repo: str,
+    path: str = "",
+    *,
+    token: str | None = None,
+    client: httpx.AsyncClient | None = None,
+) -> dict[str, tuple[str, int]]:
+    """Map file name -> (blob sha, size) for a directory. Empty when it's absent.
+
+    One listing answers "does the repo have a logo, and has it changed?" without
+    downloading the image, since the entry carries the blob sha.
+    """
+    full_name = normalize_repo(repo)
+    owned_client = client is None
+    client = client or httpx.AsyncClient(base_url=settings.github_api_base, timeout=10.0)
+    try:
+        resp = await client.get(
+            f"/repos/{full_name}/contents/{path}", headers=_headers(token)
+        )
+        if resp.status_code == 404:
+            return {}
+        if resp.status_code == 403:
+            raise GitHubError("GitHub rate limit or access denied", status_code=403)
+        resp.raise_for_status()
+        data = resp.json()
+        if not isinstance(data, list):  # path is a file
+            raise GitHubError(f"{path} is a file, not a directory", status_code=400)
+        return {
+            entry["name"]: (entry["sha"], entry.get("size", 0))
+            for entry in data
+            if entry.get("type") == "file"
+        }
+    except httpx.HTTPError as exc:
+        raise GitHubError(f"GitHub request failed: {exc}") from exc
+    finally:
+        if owned_client:
+            await client.aclose()
+
+
+async def get_blob(
+    repo: str,
+    sha: str,
+    *,
+    token: str | None = None,
+    client: httpx.AsyncClient | None = None,
+) -> bytes:
+    """Fetch raw blob bytes by sha.
+
+    The blobs API is used rather than the Contents API because the latter stops
+    inlining content above 1MB, which is exactly the size range logos live in.
+    """
+    full_name = normalize_repo(repo)
+    owned_client = client is None
+    client = client or httpx.AsyncClient(base_url=settings.github_api_base, timeout=10.0)
+    try:
+        resp = await client.get(
+            f"/repos/{full_name}/git/blobs/{sha}", headers=_headers(token)
+        )
+        if resp.status_code == 404:
+            raise GitHubError("Blob not found", status_code=404)
+        if resp.status_code == 403:
+            raise GitHubError("GitHub rate limit or access denied", status_code=403)
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("encoding") != "base64":
+            raise GitHubError(f"Unsupported blob encoding: {data.get('encoding')}")
+        return base64.b64decode(data.get("content", "") or "")
+    except httpx.HTTPError as exc:
+        raise GitHubError(f"GitHub request failed: {exc}") from exc
+    finally:
+        if owned_client:
+            await client.aclose()
+
+
 async def put_file(
     repo: str,
     path: str,
-    content: str,
+    content: str | bytes,
     message: str,
     *,
     sha: str | None = None,
@@ -144,9 +218,10 @@ async def put_file(
     means the sha is stale (the file changed underneath us).
     """
     full_name = normalize_repo(repo)
+    raw = content.encode("utf-8") if isinstance(content, str) else content
     body: dict[str, str] = {
         "message": message,
-        "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
+        "content": base64.b64encode(raw).decode("ascii"),
     }
     if sha:
         body["sha"] = sha
@@ -164,6 +239,40 @@ async def put_file(
             raise GitHubError("Repository not found or no write access", status_code=404)
         resp.raise_for_status()
         return resp.json()["content"]["sha"]
+    except httpx.HTTPError as exc:
+        raise GitHubError(f"GitHub request failed: {exc}") from exc
+    finally:
+        if owned_client:
+            await client.aclose()
+
+
+async def delete_file(
+    repo: str,
+    path: str,
+    message: str,
+    *,
+    sha: str,
+    token: str | None = None,
+    client: httpx.AsyncClient | None = None,
+) -> None:
+    """Delete a file via the Contents API. A 409/422 means the sha is stale."""
+    full_name = normalize_repo(repo)
+    owned_client = client is None
+    client = client or httpx.AsyncClient(base_url=settings.github_api_base, timeout=10.0)
+    try:
+        resp = await client.request(
+            "DELETE",
+            f"/repos/{full_name}/contents/{path}",
+            headers=_headers(token),
+            json={"message": message, "sha": sha},
+        )
+        if resp.status_code == 404:
+            return  # already gone; nothing to undo
+        if resp.status_code in (409, 422):
+            raise GitHubError("File changed on GitHub since last sync", status_code=409)
+        if resp.status_code in (401, 403):
+            raise GitHubError("GitHub token lacks write access", status_code=403)
+        resp.raise_for_status()
     except httpx.HTTPError as exc:
         raise GitHubError(f"GitHub request failed: {exc}") from exc
     finally:

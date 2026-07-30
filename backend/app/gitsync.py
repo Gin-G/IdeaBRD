@@ -1,10 +1,16 @@
-"""Two-way sync between an idea and IDEA.md in its linked GitHub repo.
+"""Two-way sync between an idea and its linked GitHub repo.
 
-Git is the source of truth: viewing an idea pulls IDEA.md and overwrites the
-database copy when the file changed; edits made in the app are committed back
-through the Contents API. If the repo has no IDEA.md yet, nothing is written
-until the user explicitly opts in (sync_init) — the app never commits a new
-file to someone's repo unprompted.
+Two files are tracked, both at the repo root: IDEA.md (title, notes, status,
+to-dos) and the tile logo, `idea_logo.<ext>`. Git is the source of truth:
+viewing an idea pulls both and overwrites the database copy when they changed;
+edits made in the app are committed back through the Contents API. If the repo
+has no IDEA.md yet, nothing is written until the user explicitly opts in
+(sync_init) — the app never commits a new file to someone's repo unprompted,
+and the same gate covers logo commits.
+
+The logo pull is what makes a repo carry its own tile: link a repo that already
+has an idea_logo.png and the tile picks the image up without anyone uploading
+it, whoever links it.
 
 Sync is best-effort — the helpers return an error message instead of raising,
 so a GitHub outage or missing token never blocks the app itself.
@@ -18,9 +24,15 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.github import GitHubError, get_file, put_file
+from app.github import GitHubError, delete_file, get_blob, get_file, list_dir, put_file
 from app.ideafile import parse_idea_file, render_idea_file
-from app.models import Idea, Identity, Todo, User
+from app.logos import (
+    LOGO_NAMES,
+    MAX_LOGO_BYTES,
+    content_type_for_path,
+    logo_path_for,
+)
+from app.models import Idea, IdeaLogo, Identity, Todo, User
 
 IDEA_FILE = "IDEA.md"
 COMMIT_AUTHOR_NOTE = "via IdeaBRD"
@@ -143,31 +155,99 @@ async def _push(session: AsyncSession, idea: Idea, token: str | None, message: s
     idea.git_synced_at = datetime.now(timezone.utc)
 
 
-async def sync_pull(session: AsyncSession, idea: Idea, user: User) -> SyncStatus:
-    """Best-effort pull of IDEA.md into the idea (git wins).
+def _repo_logo(entries: dict[str, tuple[str, int]]) -> tuple[str, str, int] | None:
+    """Pick the repo's tile logo from a root listing: (path, blob sha, size)."""
+    for name in LOGO_NAMES:
+        entry = entries.get(name)
+        if entry is not None:
+            return name, entry[0], entry[1]
+    return None
 
-    A missing file is reported, never created — creating it is an explicit
-    user choice (sync_init).
+
+async def _clear_logo(session: AsyncSession, idea: Idea) -> None:
+    stored = await session.get(IdeaLogo, idea.id)
+    if stored is not None:
+        await session.delete(stored)
+    idea.logo_url = None
+    idea.github_logo_path = None
+    idea.github_logo_sha = None
+
+
+async def _pull_logo(session: AsyncSession, idea: Idea, token: str | None) -> bool:
+    """Adopt the repo's idea_logo.<ext> as the tile image (git wins).
+
+    Returns True when the tile changed. A logo that was tracked in git and has
+    since been deleted there is dropped here too; a logo that was only ever
+    uploaded in the app (no sha recorded) is left alone, since git never had it.
+    """
+    entries = await list_dir(idea.github_repo, token=token)
+    found = _repo_logo(entries)
+    if found is None:
+        if idea.github_logo_sha is None:
+            return False
+        await _clear_logo(session, idea)
+        return True
+
+    path, sha, size = found
+    if sha == idea.github_logo_sha and path == idea.github_logo_path:
+        return False
+    content_type = content_type_for_path(path)
+    if content_type is None or size > MAX_LOGO_BYTES:
+        # Too big to serve back from the database; leave the tile as it is.
+        return False
+
+    data = await get_blob(idea.github_repo, sha, token=token)
+    stored = await session.get(IdeaLogo, idea.id)
+    if stored is None:
+        session.add(IdeaLogo(idea_id=idea.id, content_type=content_type, data=data))
+    else:
+        stored.content_type = content_type
+        stored.data = data
+    # Version on the blob sha: it changes exactly when the image content does.
+    idea.logo_url = f"/api/ideas/{idea.id}/logo?v={sha[:16]}"
+    idea.github_logo_path = path
+    idea.github_logo_sha = sha
+    return True
+
+
+async def sync_pull(session: AsyncSession, idea: Idea, user: User) -> SyncStatus:
+    """Best-effort pull of IDEA.md and the tile logo into the idea (git wins).
+
+    A missing IDEA.md is reported, never created — creating it is an explicit
+    user choice (sync_init). The logo is pulled either way: adopting artwork the
+    repo already carries doesn't write anything back.
     """
     if not idea.github_repo:
         return SyncStatus()
+    state = SyncStatus()
     try:
         token = await resolve_token(session, idea, user)
         found = await get_file(idea.github_repo, IDEA_FILE, token=token)
         if found is None:
-            return SyncStatus(file_missing=True)
-        text, sha = found
-        if sha == idea.github_file_sha:
-            idea.git_synced_at = datetime.now(timezone.utc)
-            return SyncStatus()
-        return SyncStatus(changed=await _apply_file(session, idea, text, sha))
+            state.file_missing = True
+        else:
+            text, sha = found
+            if sha == idea.github_file_sha:
+                idea.git_synced_at = datetime.now(timezone.utc)
+            else:
+                state.changed = await _apply_file(session, idea, text, sha)
     except GitHubError as exc:
         return SyncStatus(error=str(exc))
+    try:
+        if await _pull_logo(session, idea, token):
+            state.changed = True
+    except GitHubError as exc:
+        state.error = str(exc)
+    return state
 
 
 async def sync_init(session: AsyncSession, idea: Idea, user: User) -> str | None:
     """Create IDEA.md from the idea's current state — the user opted in to
-    tracking this idea in the repo. Returns an error message, or None."""
+    tracking this idea in the repo. Returns an error message, or None.
+
+    An image uploaded before the opt-in goes up in the same breath, so the repo
+    ends up with everything the tile is made of rather than half of it.
+    """
     if not idea.github_repo:
         return None
     try:
@@ -175,6 +255,106 @@ async def sync_init(session: AsyncSession, idea: Idea, user: User) -> str | None
         await _push(
             session, idea, token, f"Track idea in {IDEA_FILE} ({COMMIT_AUTHOR_NOTE})"
         )
+        stored = await session.get(IdeaLogo, idea.id)
+        if stored is not None and idea.github_logo_sha is None:
+            await _push_logo(idea, stored.data, stored.content_type, token)
+        return None
+    except GitHubError as exc:
+        return str(exc)
+
+
+async def _remote_logo_sha(idea: Idea, path: str, token: str | None) -> str | None:
+    """Current blob sha of a repo logo path, for recovering from a stale sha."""
+    entries = await list_dir(idea.github_repo, token=token)
+    entry = entries.get(path)
+    return entry[0] if entry else None
+
+
+async def _push_logo(
+    idea: Idea, data: bytes, content_type: str, token: str | None
+) -> None:
+    """Commit image bytes as idea_logo.<ext>, retrying once on a stale sha.
+
+    Replacing a logo with a different format also removes the old file, so the
+    repo keeps exactly one.
+    """
+    path = logo_path_for(content_type)
+    previous = idea.github_logo_path
+    message = f"Update idea logo ({COMMIT_AUTHOR_NOTE})"
+    sha = idea.github_logo_sha if previous == path else None
+    try:
+        new_sha = await put_file(
+            idea.github_repo, path, data, message, sha=sha, token=token
+        )
+    except GitHubError as exc:
+        if exc.status_code != 409:
+            raise
+        new_sha = await put_file(
+            idea.github_repo,
+            path,
+            data,
+            message,
+            sha=await _remote_logo_sha(idea, path, token),
+            token=token,
+        )
+    idea.github_logo_path = path
+    idea.github_logo_sha = new_sha
+    if previous and previous != path:
+        old_sha = await _remote_logo_sha(idea, previous, token)
+        if old_sha:
+            await delete_file(
+                idea.github_repo,
+                previous,
+                f"Remove replaced idea logo ({COMMIT_AUTHOR_NOTE})",
+                sha=old_sha,
+                token=token,
+            )
+
+
+async def sync_logo_push(
+    session: AsyncSession, idea: Idea, user: User, data: bytes, content_type: str
+) -> str | None:
+    """Commit an uploaded image to the repo as idea_logo.<ext>.
+
+    Gated on tracking like every other push, so uploading an image never creates
+    files in a repo the user hasn't opted into — sync_init picks it up later.
+    """
+    if not idea.github_repo or idea.github_file_sha is None:
+        return None
+    try:
+        token = await resolve_token(session, idea, user)
+        await _push_logo(idea, data, content_type, token)
+        return None
+    except GitHubError as exc:
+        return str(exc)
+
+
+async def sync_logo_delete(session: AsyncSession, idea: Idea, user: User) -> str | None:
+    """Commit the removal of the repo's logo file.
+
+    Without this the next pull would re-adopt the image from git and silently
+    undo the removal, since git wins.
+    """
+    if not idea.github_repo or not idea.github_logo_path:
+        return None
+    path = idea.github_logo_path
+    message = f"Remove idea logo ({COMMIT_AUTHOR_NOTE})"
+    try:
+        token = await resolve_token(session, idea, user)
+        try:
+            await delete_file(
+                idea.github_repo, path, message, sha=idea.github_logo_sha, token=token
+            )
+        except GitHubError as exc:
+            if exc.status_code != 409:
+                raise
+            current = await _remote_logo_sha(idea, path, token)
+            if current:
+                await delete_file(
+                    idea.github_repo, path, message, sha=current, token=token
+                )
+        idea.github_logo_path = None
+        idea.github_logo_sha = None
         return None
     except GitHubError as exc:
         return str(exc)

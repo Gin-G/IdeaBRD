@@ -43,3 +43,4 @@ to-do replaces it rather than editing it in place.
 - [x] Normalize `github_repo` to `owner/name` on write, so repo links stop doubling up, and backfill the rows that stored a full clone URL
 - [x] Drag-and-drop tile reordering on the board, with Alt+arrow as the keyboard equivalent
 - [x] Image upload for tile logos, stored in Postgres and served from `/api/ideas/{id}/logo`
+- [x] Track the tile logo in git as `idea_logo.<ext>` beside IDEA.md, so a linked repo carries its own artwork and any board that links it builds the tile from the repo
