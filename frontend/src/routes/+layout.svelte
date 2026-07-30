@@ -21,10 +21,7 @@
 	<header class="sticky top-0 z-20 border-b border-white/10 bg-slate-950/70 backdrop-blur">
 		<div class="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 sm:px-6">
 			<a href="/" class="flex items-center gap-2.5">
-				<span
-					class="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-indigo-500 to-fuchsia-500 text-lg font-black text-white shadow-lg shadow-indigo-500/30"
-					>◆</span
-				>
+				<img src="/logo.png" alt="" width="36" height="36" class="h-9 w-9 rounded-xl" />
 				<span class="text-lg font-extrabold tracking-tight">IdeaBRD</span>
 			</a>
 
