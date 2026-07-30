@@ -19,7 +19,7 @@ frontend:
   path: /
   replicaCount: 1
   container:
-    image: docker.io/ncging/ideabrd-frontend:2026-07-30.03.38
+    image: docker.io/ncging/ideabrd-frontend:2026-07-30.17.43
     imagePullPolicy: Always
     port: 80
     cpu: "250m"
