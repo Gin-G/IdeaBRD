@@ -235,6 +235,8 @@ progress: 60
 
 # My idea
 
+<!-- IdeaBRD parses this file… (format rules, stripped on read) -->
+
 Free-form markdown notes.
 
 ## Todos
@@ -256,6 +258,28 @@ Free-form markdown notes.
   stay database-only until then.
 - Sync is best-effort: GitHub errors are reported in the tile (`git_sync_error`) and never
   block the app. Push conflicts (stale sha) retry once against the current file.
+
+### The file format (and how it bites)
+
+Parsing is lenient — it never errors, it just drops what it can't read, which is worse if you
+don't know the rules. So **every file IdeaBRD writes carries them**, as an HTML comment plus an
+always-present `## Todos` heading: a linked repo is usually edited by someone (or some agent)
+who has only the file in front of them, never this README. Comments are stripped on read, so
+the block round-trips without showing up on the board.
+
+The parts that silently cost you work:
+
+| Rule | What goes wrong |
+|------|-----------------|
+| The heading is `## Todos` (or `## To-Dos`), case-insensitive | `## ToDo`, `## TODO`, `## Tasks` don't match — the entire list is parsed as notes instead |
+| Only `- [ ]` / `- [x]` lines inside that section survive | `###` sub-headings vanish; a to-do wrapped across two lines is cut at the break |
+| A later `## ` heading ends the list | Items after it are notes |
+| Prose *outside* the section becomes the tile's notes | Long write-ups are published to the board, not filed away — keep it short |
+| Items match existing rows by **exact text** | Rewording a to-do is a delete plus an insert, not an edit — a checked item comes back unchecked |
+| `status` ∈ `idea`/`active`/`paused`/`done`, `progress` 0-100 | Anything else in frontmatter is ignored |
+
+Render and parse both live in `backend/app/ideafile.py`; the guidance block is the `GUIDANCE`
+constant there.
 
 ### Tile logos in git (`idea_logo.<ext>`)
 
