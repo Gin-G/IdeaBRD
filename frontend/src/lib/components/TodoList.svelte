@@ -6,11 +6,21 @@
 		ideaId,
 		todos = $bindable([]),
 		canEdit = true,
+		repo = null,
 		onchange
-	}: { ideaId: number; todos: Todo[]; canEdit?: boolean; onchange?: () => void } = $props();
+	}: {
+		ideaId: number;
+		todos: Todo[];
+		canEdit?: boolean;
+		/** Linked repo ("owner/name"), or null — promoting to an issue needs one. */
+		repo?: string | null;
+		onchange?: () => void;
+	} = $props();
 
 	let newText = $state('');
 	let adding = $state(false);
+	let promoting = $state<number | null>(null);
+	let error = $state('');
 
 	const done = $derived(todos.filter((t) => t.done).length);
 
@@ -40,6 +50,21 @@
 		await api.deleteTodo(todo.id);
 		todos = todos.filter((t) => t.id !== todo.id);
 		onchange?.();
+	}
+
+	/** Promoting is an explicit action, so its failure is shown rather than swallowed. */
+	async function promote(todo: Todo) {
+		promoting = todo.id;
+		error = '';
+		try {
+			const updated = await api.promoteTodo(todo.id);
+			todos = todos.map((t) => (t.id === todo.id ? updated : t));
+			onchange?.();
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Could not open the issue';
+		} finally {
+			promoting = null;
+		}
 	}
 </script>
 
@@ -78,8 +103,28 @@
 				<span
 					class="min-w-0 flex-1 break-words text-sm {todo.done
 						? 'text-slate-500 line-through'
-						: 'text-slate-200'}">{todo.text}</span
+						: 'text-slate-200'}"
+					>{todo.text}{#if todo.github_issue_url}&nbsp;<a
+							href={todo.github_issue_url}
+							target="_blank"
+							rel="noreferrer noopener"
+							title="Tracked as issue #{todo.github_issue_number} — the issue owns this item's text and state"
+							class="whitespace-nowrap text-xs text-indigo-300 no-underline hover:text-indigo-200"
+							>#{todo.github_issue_number}</a
+						>{/if}</span
 				>
+				{#if canEdit && repo && !todo.github_issue_number}
+					<button
+						type="button"
+						title="Open a GitHub issue for this to-do"
+						disabled={promoting === todo.id}
+						class="shrink-0 text-xs text-slate-500 transition hover:text-indigo-300 disabled:cursor-wait {promoting ===
+						todo.id
+							? 'opacity-100'
+							: 'opacity-0 group-hover:opacity-100'}"
+						onclick={() => promote(todo)}>{promoting === todo.id ? '…' : 'issue'}</button
+					>
+				{/if}
 				{#if canEdit}
 					<button
 						type="button"
@@ -94,6 +139,10 @@
 			<li class="px-2 py-1.5 text-sm text-slate-500">No tasks yet.</li>
 		{/if}
 	</ul>
+
+	{#if error}
+		<p class="mt-2 px-2 text-xs text-rose-300">{error}</p>
+	{/if}
 
 	{#if canEdit}
 		<form class="mt-3 flex gap-2" onsubmit={add}>

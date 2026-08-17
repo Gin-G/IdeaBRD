@@ -31,12 +31,18 @@ way back in, so the block round-trips without ever reaching the board.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
+from typing import NamedTuple
 
 VALID_STATUSES = ("idea", "active", "paused", "done")
 
 _TODO_RE = re.compile(r"^\s*[-*]\s*\[( |x|X)\]\s*(.*\S)\s*$")
 _TODOS_HEADING_RE = re.compile(r"^##\s+to-?dos\s*$", re.IGNORECASE)
+# Trailing "(#12)" binds the item to a GitHub issue. Requiring a non-empty
+# remainder keeps a bare "- [ ] (#12)" as literal text rather than a link to
+# an issue with no to-do attached.
+_ISSUE_SUFFIX_RE = re.compile(r"^(.+?)\s*\(#(\d+)\)$")
 # Whole-line comments take their newline with them, so removing the guidance
 # block doesn't leave a blank gap behind in the notes.
 _COMMENT_BLOCK_RE = re.compile(
@@ -63,10 +69,25 @@ the shape below matters more than it looks. Anything the parser
                sub-headings and blank-line grouping are discarded, and a
                wrapped item is cut at the line break, so keep each to-do on
                one line. The next "## " heading ends the list.
+  (#12)        A to-do ending in an issue reference is backed by that issue
+               in this repo. The issue wins: its title becomes the to-do's
+               text and its open/closed state the checkbox, both here and on
+               the board. Ticking the box in the app closes the issue.
 
-To-dos are matched to the board by exact text, so rewording one replaces it
-rather than editing it in place — expect a checked item to come back
-unchecked if you reword it.
+Working in this repo? This file is the to-do list — use it rather than
+starting a parallel one. Tick items off as you finish them, add new ones as
+you find them, and keep status/progress honest: a TODO.md, a plan in a chat
+window or a checklist in a commit message is invisible to everyone reading
+the board. For work worth assigning, discussing, or writing up at length,
+open a real issue and append its "(#12)" to the line — the item is then
+tracked by number instead of text, and the issue holds the detail this file
+has no room for (prose here is published to the board, not filed away).
+
+To-dos without an issue are matched to the board by exact text, so rewording
+one replaces it rather than editing it in place — expect a checked item to
+come back unchecked if you reword it. Issue-backed to-dos are matched by
+number instead, so keep the "(#12)" and reword freely; drop the reference and
+the item becomes an ordinary to-do again (the issue itself is left alone).
 
 HTML comments are stripped on read, so this block never reaches the board.
 -->"""
@@ -76,14 +97,37 @@ def _strip_comments(body: str) -> str:
     return _COMMENT_RE.sub("", _COMMENT_BLOCK_RE.sub("", body))
 
 
+def _split_issue_ref(text: str) -> tuple[str, int | None]:
+    """Split "Build MVP (#12)" into ("Build MVP", 12); no suffix means no issue."""
+    m = _ISSUE_SUFFIX_RE.match(text)
+    if not m:
+        return text, None
+    return m.group(1), int(m.group(2))
+
+
+class ParsedTodo(NamedTuple):
+    text: str
+    done: bool
+    # Issue number backing this item, from a trailing "(#12)".
+    issue: int | None = None
+
+
+# Callers may hand render_idea_file plain (text, done) pairs; the issue is optional.
+TodoInput = ParsedTodo | tuple[str, bool] | tuple[str, bool, int | None]
+
+
+def _as_todo(item: TodoInput) -> ParsedTodo:
+    return item if isinstance(item, ParsedTodo) else ParsedTodo(*item)
+
+
 @dataclass
 class ParsedIdeaFile:
     title: str | None = None
     notes: str = ""
     status: str | None = None
     progress: int | None = None
-    # (text, done) in file order
-    todos: list[tuple[str, bool]] = field(default_factory=list)
+    # In file order.
+    todos: list[ParsedTodo] = field(default_factory=list)
 
 
 def render_idea_file(
@@ -92,7 +136,7 @@ def render_idea_file(
     notes: str,
     status: str,
     progress: int,
-    todos: list[tuple[str, bool]],
+    todos: Sequence[TodoInput],
     guidance: bool = True,
 ) -> str:
     """Render the idea as IDEA.md.
@@ -115,8 +159,13 @@ def render_idea_file(
     if notes.strip():
         lines += [notes.strip(), ""]
     lines += ["## Todos", ""]
-    lines += [f"- [{'x' if done else ' '}] {text}" for text, done in todos]
-    if todos:
+    items = [_as_todo(t) for t in todos]
+    lines += [
+        f"- [{'x' if item.done else ' '}] {item.text}"
+        + (f" (#{item.issue})" if item.issue else "")
+        for item in items
+    ]
+    if items:
         lines.append("")
     return "\n".join(lines)
 
@@ -175,7 +224,10 @@ def parse_idea_file(text: str) -> ParsedIdeaFile:
                 continue
             m = _TODO_RE.match(line)
             if m:
-                parsed.todos.append((m.group(2), m.group(1).lower() == "x"))
+                text, issue = _split_issue_ref(m.group(2))
+                parsed.todos.append(
+                    ParsedTodo(text, m.group(1).lower() == "x", issue)
+                )
             # non-item lines inside the Todos section are ignored
             continue
         note_lines.append(line)

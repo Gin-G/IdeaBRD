@@ -45,6 +45,9 @@ class TodoOut(BaseModel):
     text: str
     done: bool
     position: int
+    # Set once the to-do has been promoted to an issue in the idea's repo.
+    github_issue_number: int | None = None
+    github_issue_url: str | None = None
 
 
 class TodoCreate(BaseModel):

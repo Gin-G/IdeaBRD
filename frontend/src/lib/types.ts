@@ -43,6 +43,9 @@ export interface Todo {
 	text: string;
 	done: boolean;
 	position: number;
+	/** Issue backing this to-do, once promoted. While set, the issue owns its text and state. */
+	github_issue_number: number | null;
+	github_issue_url: string | null;
 }
 
 export interface IdeaSummary {

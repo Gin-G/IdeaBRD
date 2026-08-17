@@ -1,6 +1,6 @@
 ---
 status: active
-progress: 95
+progress: 90
 ---
 
 # IdeaBRD
@@ -23,20 +23,36 @@ the shape below matters more than it looks. Anything the parser
                sub-headings and blank-line grouping are discarded, and a
                wrapped item is cut at the line break, so keep each to-do on
                one line. The next "## " heading ends the list.
+  (#12)        A to-do ending in an issue reference is backed by that issue
+               in this repo. The issue wins: its title becomes the to-do's
+               text and its open/closed state the checkbox, both here and on
+               the board. Ticking the box in the app closes the issue.
 
-To-dos are matched to the board by exact text, so rewording one replaces it
-rather than editing it in place — expect a checked item to come back
-unchecked if you reword it.
+Working in this repo? This file is the to-do list — use it rather than
+starting a parallel one. Tick items off as you finish them, add new ones as
+you find them, and keep status/progress honest: a TODO.md, a plan in a chat
+window or a checklist in a commit message is invisible to everyone reading
+the board. For work worth assigning, discussing, or writing up at length,
+open a real issue and append its "(#12)" to the line — the item is then
+tracked by number instead of text, and the issue holds the detail this file
+has no room for (prose here is published to the board, not filed away).
+
+To-dos without an issue are matched to the board by exact text, so rewording
+one replaces it rather than editing it in place — expect a checked item to
+come back unchecked if you reword it. Issue-backed to-dos are matched by
+number instead, so keep the "(#12)" and reword freely; drop the reference and
+the item becomes an ordinary to-do again (the issue itself is left alone).
 
 HTML comments are stripped on read, so this block never reaches the board.
 -->
 
-A personal idea board: each idea is a tile with notes, a to-do list, progress
-tracking and live GitHub data for repo-linked projects. FastAPI + async
-SQLAlchemy on Postgres (CNPG), SvelteKit + Tailwind front end, deployed to
-Kubernetes by Argo CD with secrets from OpenBao. Backend lives in `backend/app`,
-the UI in `frontend/src`, the chart in `chart/`; `docker-compose.yml` runs the
-whole stack locally and `backend/tests` holds the pytest suite.
+A personal idea board: each idea is a tile with notes, a to-do list that can be
+backed by GitHub issues, progress tracking and live GitHub data for repo-linked
+projects. FastAPI + async SQLAlchemy on Postgres (CNPG), SvelteKit + Tailwind
+front end, deployed to Kubernetes by Argo CD with secrets from OpenBao. Backend
+lives in `backend/app`, the UI in `frontend/src`, the chart in `chart/`;
+`docker-compose.yml` runs the whole stack locally and `backend/tests` holds the
+pytest suite.
 
 ## Todos
 
@@ -53,3 +69,11 @@ whole stack locally and `backend/tests` holds the pytest suite.
 - [x] Image upload for tile logos, stored in Postgres and served from `/api/ideas/{id}/logo`
 - [x] Track the tile logo in git as `idea_logo.<ext>` beside IDEA.md, so a linked repo carries its own artwork and any board that links it builds the tile from the repo
 - [x] Write the IDEA.md format rules into every file as a stripped-on-read HTML comment, with the `## Todos` heading always present — a seeded stub was the whole spec its next editor saw, and the rules only existed in this repo
+- [x] Back to-dos with GitHub issues: promote one from the tile, mirror its title and open/closed state in both directions, and carry the reference as `(#12)` in this file — issue-backed items are matched by number instead of text, so rewording one stops silently replacing it
+- [x] Tell whoever edits IDEA.md next that it *is* the tracker — the format rules said how to write the file but never that progress and new work belong in it rather than a side channel
+- [ ] Show richer issue data on the tile (labels, assignee, comment count), and import a repo's existing issues as to-dos instead of only pushing new ones
+- [ ] Add `/api/webhooks/github` so an issue closed on GitHub pushes to the tile over the existing WebSocket, instead of the change waiting for someone to open the tile
+- [ ] Page the issue pull past the first 100, or retire it once webhooks land — a to-do pointing at an older issue currently keeps whatever state it already had
+- [ ] Mount the to-do list in `IdeaModal.svelte` too; the promote action only exists on the full idea page
+- [ ] Decide on GitHub Projects v2 — GraphQL-only so none of `app/github.py` is reusable, needs the `project` scope added (every existing GitHub identity has to re-authorize, since OAuth tokens don't gain scopes), and projects are user/org-owned so an idea needs its own project id plus a per-project Status field option mapping
+- [ ] Back up the Postgres cluster — it runs a single CNPG instance with no replica

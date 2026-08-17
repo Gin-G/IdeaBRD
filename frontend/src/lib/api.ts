@@ -96,6 +96,9 @@ export const api = {
 		request<Todo>(`/api/todos/${todoId}`, { method: 'PATCH', body: JSON.stringify(data) }),
 	deleteTodo: (todoId: number) =>
 		request<void>(`/api/todos/${todoId}`, { method: 'DELETE' }),
+	/** Open a GitHub issue for this to-do; the issue then owns its text and state. */
+	promoteTodo: (todoId: number) =>
+		request<Todo>(`/api/todos/${todoId}/issue`, { method: 'POST' }),
 
 	github: (ideaId: number) => request<GitHubRepo>(`/api/ideas/${ideaId}/github`),
 

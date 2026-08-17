@@ -150,6 +150,11 @@ class Todo(Base):
     text: Mapped[str] = mapped_column(String(500))
     done: Mapped[bool] = mapped_column(Boolean, default=False)
     position: Mapped[int] = mapped_column(Integer, default=0)
+    # Issue in the idea's linked repo backing this to-do, once promoted. While
+    # set, the issue is authoritative for both text and done (open/closed) —
+    # unlike a plain to-do, which the board owns.
+    github_issue_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    github_issue_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

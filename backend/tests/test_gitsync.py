@@ -45,22 +45,26 @@ def test_render_parse_round_trip():
     assert parsed.notes == "Some notes.\n\nMore notes."
     assert parsed.status == "active"
     assert parsed.progress == 60
-    assert parsed.todos == [("set up repo", True), ("build MVP", False)]
+    assert parsed.todos == [("set up repo", True, None), ("build MVP", False, None)]
 
 
 def test_rendered_file_documents_its_own_format():
     """A seeded file has to teach its own rules — it's all the next editor sees.
 
     The two things that silently cost a whole list: guessing the heading name,
-    and not knowing the section exists at all.
+    and not knowing the section exists at all. Beyond the format, the file also
+    has to say what it is *for*: an agent handed the repo will otherwise track
+    its work in a TODO.md or a plan nobody on the board can see.
     """
     text = render_idea_file(
         title="Fresh", notes="", status="idea", progress=0, todos=[]
     )
     assert "## Todos" in text  # present even with nothing in it
     assert "<!--" in text and "-->" in text
-    for rule in ("## ToDo", "exact text", "one line", "the board"):
+    for rule in ("## ToDo", "exact text", "one line", "the board", "(#12)"):
         assert rule in text
+    for instruction in ("This file is the to-do list", "TODO.md", "open a real issue"):
+        assert instruction in text
 
     # ...and none of it leaks onto the board or into the list.
     parsed = parse_idea_file(text)
@@ -88,7 +92,7 @@ def test_comments_are_stripped_not_stored():
         "<!-- inline -->\n\n## Todos\n\n<!-- ignore me -->\n- [x] real\n"
     )
     assert parsed.notes == "real notes"
-    assert parsed.todos == [("real", True)]
+    assert parsed.todos == [("real", True, None)]
 
 
 def test_parse_lenient():
@@ -99,7 +103,7 @@ def test_parse_lenient():
     assert parsed.title is None
     assert parsed.status is None
     assert parsed.progress is None
-    assert parsed.todos == [("shipped", True), ("next", False)]
+    assert parsed.todos == [("shipped", True, None), ("next", False, None)]
     assert "just some notes" in parsed.notes
     assert "## Links" in parsed.notes
 

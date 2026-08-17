@@ -58,7 +58,7 @@ single shared local user so you can use the whole app immediately. Add `GOOGLE_C
 cd backend
 python -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
-pytest                                   # 9 tests
+pytest
 uvicorn app.main:app --reload            # needs a Postgres in DATABASE_URL
 ```
 
@@ -201,7 +201,8 @@ When neither Google nor GitHub is configured, a built-in **dev login** is used (
   color, logo, optional `github_repo`, grid position, git sync state (`github_file_sha`,
   `git_synced_at`, `github_logo_path`, `github_logo_sha`)
 - **idea_logos** — uploaded/synced tile image bytes, one row per idea
-- **todos** — text, done, position (belong to an idea)
+- **todos** — text, done, position (belong to an idea), optional backing GitHub issue
+  (`github_issue_number`, `github_issue_url`)
 - **idea_collaborators** — (idea, user, role `editor`/`viewer`, per-user board position)
 - **idea_invitations** — pending invites by email (claimed on first login)
 
@@ -242,7 +243,7 @@ Free-form markdown notes.
 ## Todos
 
 - [x] set up repo
-- [ ] build MVP
+- [ ] build MVP (#12)
 ```
 
 - **Pull (git wins)** — opening a tile (or *Sync now*) fetches `IDEA.md` via the Contents API;
@@ -267,6 +268,12 @@ always-present `## Todos` heading: a linked repo is usually edited by someone (o
 who has only the file in front of them, never this README. Comments are stripped on read, so
 the block round-trips without showing up on the board.
 
+The block also says what the file is *for*, not just how to write it — that this is the
+tracker, that finished work gets ticked off and new work added here rather than in a `TODO.md`
+or a plan nobody on the board can see, and that anything worth assigning or writing up at
+length should become an issue whose `(#12)` goes on the line. Knowing the syntax and still
+keeping your checklist somewhere else leaves the tile just as wrong as a mis-parsed heading.
+
 The parts that silently cost you work:
 
 | Rule | What goes wrong |
@@ -275,11 +282,44 @@ The parts that silently cost you work:
 | Only `- [ ]` / `- [x]` lines inside that section survive | `###` sub-headings vanish; a to-do wrapped across two lines is cut at the break |
 | A later `## ` heading ends the list | Items after it are notes |
 | Prose *outside* the section becomes the tile's notes | Long write-ups are published to the board, not filed away — keep it short |
-| Items match existing rows by **exact text** | Rewording a to-do is a delete plus an insert, not an edit — a checked item comes back unchecked |
+| Items match existing rows by **exact text**, unless they carry `(#12)` | Rewording a plain to-do is a delete plus an insert, not an edit — a checked item comes back unchecked. Issue-backed ones match on the number, so they survive rewording |
 | `status` ∈ `idea`/`active`/`paused`/`done`, `progress` 0-100 | Anything else in frontmatter is ignored |
 
 Render and parse both live in `backend/app/ideafile.py`; the guidance block is the `GUIDANCE`
 constant there.
+
+### To-dos backed by issues (`(#12)`)
+
+Any to-do on a repo-linked idea can be **promoted to a GitHub issue** — hover it and hit
+*issue*. From then on the issue, not IDEA.md, owns that item:
+
+- **The issue wins.** Every sync reads the repo's issues and applies each linked issue's title
+  and open/closed state to its to-do. Rename an issue on GitHub and the to-do renames; close it
+  and the box ticks.
+- **Ticking closes it.** Toggling a promoted to-do in the app `PATCH`es the issue closed or
+  open, and editing its text retitles the issue.
+- **The file carries the reference**, as a trailing `(#12)`. That fixes the worst wart of the
+  markdown format: plain items are matched between file and board by exact text, so rewording
+  one silently replaces it, where a promoted one is matched by number and can be reworded
+  freely. Adding `(#12)` to a line by hand adopts the existing to-do rather than duplicating it.
+- **Deleting a to-do doesn't close its issue** — it only unbinds. Tidying a tile shouldn't
+  reach into someone's issue tracker.
+
+Two deliberate limits:
+
+- The pull reads **one page of issues** (100, most recent first). A to-do pointing at an older
+  issue keeps the state it had rather than being reported wrong; app-side edits still reach the
+  right issue either way. A webhook would remove the polling entirely.
+- A pull that changes an issue-backed to-do **does not commit IDEA.md** — the file catches up on
+  the next app-side edit. Opening a tile isn't a user action worth a commit, and the rule that
+  IdeaBRD only writes to a repo when someone asks it to is worth more than a momentarily stale
+  checkbox.
+
+Promotion needs no `IDEA.md` opt-in: the click is the opt-in, since nothing reaches the repo
+until someone asks. It uses the same token chain as every other push (idea owner's, then the
+acting user's, then the shared PAT) and the `repo` scope the GitHub login already requests.
+Unlike the best-effort background syncs, a failed promotion is reported to the user — an
+explicit action that silently did nothing is worse than an error.
 
 ### Tile logos in git (`idea_logo.<ext>`)
 
@@ -318,3 +358,12 @@ GitHub panel shows live stars/issues/last-push.
 ## Roadmap / deferred
 
 - Backups for the Postgres cluster (it runs a single CNPG instance, no replica).
+- Richer issue data on the tile (labels, assignee, comment count), and importing a repo's
+  existing issues as to-dos rather than only pushing new ones.
+- A `/api/webhooks/github` endpoint so an issue closed on GitHub pushes to the tile over the
+  existing WebSocket, instead of the state being picked up on the next tile open.
+- GitHub **Projects v2**. Deferred on cost, not value: it's GraphQL-only (none of
+  `app/github.py` is reusable), it needs the `project` scope added to `github_scope` — which
+  every existing GitHub identity would have to re-authorize for, since OAuth tokens don't gain
+  scopes — and projects are user/org-owned rather than repo-owned, so an idea would need its own
+  project id and a per-project mapping of its Status field's option ids.

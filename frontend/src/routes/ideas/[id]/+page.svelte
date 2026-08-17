@@ -209,7 +209,12 @@
 
 			<!-- Under the notes, where there's room for long items to wrap -->
 			<div class="card p-6">
-				<TodoList ideaId={idea.id} bind:todos={idea.todos} {canEdit} />
+				<TodoList
+					ideaId={idea.id}
+					bind:todos={idea.todos}
+					{canEdit}
+					repo={idea.github_repo}
+				/>
 			</div>
 		</div>
 

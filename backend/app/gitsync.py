@@ -14,6 +14,12 @@ The logo pull is what makes a repo carry its own tile: link a repo that already
 has an idea_logo.png and the tile picks the image up without anyone uploading
 it, whoever links it.
 
+A to-do can also be promoted to a **GitHub issue**, after which the issue —
+not IDEA.md — owns its text and open/closed state, and the file just carries
+the reference ("- [ ] Build MVP (#12)"). That gives the item a stable identity:
+plain to-dos are matched between file and board by exact text, so rewording one
+replaces it, where a promoted one can be reworded freely.
+
 Sync is best-effort — the helpers return an error message instead of raising,
 so a GitHub outage or missing token never blocks the app itself.
 """
@@ -26,8 +32,18 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.github import GitHubError, delete_file, get_blob, get_file, list_dir, put_file
-from app.ideafile import parse_idea_file, render_idea_file
+from app.github import (
+    GitHubError,
+    create_issue,
+    delete_file,
+    get_blob,
+    get_file,
+    list_dir,
+    list_issues,
+    put_file,
+    update_issue,
+)
+from app.ideafile import ParsedTodo, parse_idea_file, render_idea_file
 from app.logos import (
     LOGO_NAMES,
     MAX_LOGO_BYTES,
@@ -77,27 +93,80 @@ def _render(idea: Idea) -> str:
         notes=idea.notes,
         status=idea.status,
         progress=idea.progress,
-        todos=[(t.text, t.done) for t in todos],
+        todos=[ParsedTodo(t.text, t.done, t.github_issue_number) for t in todos],
     )
 
 
+def _issue_url(repo: str, number: int) -> str:
+    return f"https://github.com/{repo}/issues/{number}"
+
+
 async def _apply_todos(
-    session: AsyncSession, idea: Idea, parsed: list[tuple[str, bool]]
+    session: AsyncSession, idea: Idea, parsed: list[ParsedTodo]
 ) -> bool:
-    """Make the idea's todos match the file, reusing rows by text to keep ids."""
+    """Make the idea's todos match the file, reusing rows to keep ids.
+
+    An item carrying an issue number matches the row already bound to that
+    issue, whatever either one says: the number is stable where the text is
+    not, so reworded issue-backed items are edited in place instead of being
+    replaced. Everything else still matches on exact text.
+    """
     remaining = sorted(idea.todos, key=lambda t: (t.position, t.id))
     changed = False
-    for pos, (text, done) in enumerate(parsed):
-        text = text[:500]
-        match = next((t for t in remaining if t.text == text), None)
+    for pos, item in enumerate(parsed):
+        text = item.text[:500]
+        if item.issue is not None:
+            match = next(
+                (t for t in remaining if t.github_issue_number == item.issue), None
+            )
+            # Not bound yet: an issue reference added by hand adopts the to-do
+            # whose text it matches rather than duplicating it.
+            if match is None:
+                match = next(
+                    (
+                        t
+                        for t in remaining
+                        if t.github_issue_number is None and t.text == text
+                    ),
+                    None,
+                )
+        else:
+            match = next(
+                (
+                    t
+                    for t in remaining
+                    if t.github_issue_number is None and t.text == text
+                ),
+                None,
+            )
         if match:
             remaining.remove(match)
-            if match.done != done or match.position != pos:
-                match.done = done
+            url = _issue_url(idea.github_repo, item.issue) if item.issue else None
+            if (
+                match.done != item.done
+                or match.position != pos
+                or match.text != text
+                or match.github_issue_number != item.issue
+            ):
+                match.text = text
+                match.done = item.done
                 match.position = pos
+                match.github_issue_number = item.issue
+                match.github_issue_url = url
                 changed = True
         else:
-            session.add(Todo(idea_id=idea.id, text=text, done=done, position=pos))
+            session.add(
+                Todo(
+                    idea_id=idea.id,
+                    text=text,
+                    done=item.done,
+                    position=pos,
+                    github_issue_number=item.issue,
+                    github_issue_url=(
+                        _issue_url(idea.github_repo, item.issue) if item.issue else None
+                    ),
+                )
+            )
             changed = True
     for leftover in remaining:
         # AsyncSession.delete() is a coroutine — without the await the row survives
@@ -212,6 +281,95 @@ async def _pull_logo(session: AsyncSession, idea: Idea, token: str | None) -> bo
     return True
 
 
+async def _pull_issues(session: AsyncSession, idea: Idea, token: str | None) -> bool:
+    """Apply live issue titles and open/closed state to issue-backed to-dos.
+
+    Runs after the file has been applied and overrides it: for an item that was
+    promoted to an issue, the issue is the source of truth, not the checkbox
+    someone left in IDEA.md.
+
+    Nothing is committed back from here. The file catches up on the next
+    app-side edit, which keeps the rule that IdeaBRD only writes to a repo in
+    response to a user action — opening a tile is not one.
+    """
+    # Rows added while applying the file aren't in idea.todos yet.
+    await session.flush()
+    linked = (
+        (
+            await session.execute(
+                select(Todo).where(
+                    Todo.idea_id == idea.id, Todo.github_issue_number.is_not(None)
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not linked:
+        return False
+
+    issues = await list_issues(idea.github_repo, token=token)
+    changed = False
+    for todo in linked:
+        issue = issues.get(todo.github_issue_number)
+        if issue is None:
+            continue  # older than the pulled page, or deleted; leave it as it is
+        done = issue.state == "closed"
+        text = (issue.title or todo.text)[:500]
+        url = issue.html_url or _issue_url(idea.github_repo, issue.number)
+        if todo.done != done or todo.text != text or todo.github_issue_url != url:
+            todo.done = done
+            todo.text = text
+            todo.github_issue_url = url
+            changed = True
+    return changed
+
+
+async def sync_issue_create(
+    session: AsyncSession, idea: Idea, todo: Todo, user: User
+) -> None:
+    """Open an issue for a to-do and bind the two together.
+
+    Raises GitHubError — promoting is an explicit click, so a failure is
+    reported rather than swallowed the way background syncs are.
+    """
+    token = await resolve_token(session, idea, user)
+    issue = await create_issue(
+        idea.github_repo,
+        todo.text,
+        f"Tracked on the IdeaBRD board under **{idea.title}**.",
+        token=token,
+    )
+    todo.github_issue_number = issue.number
+    todo.github_issue_url = issue.html_url or _issue_url(
+        idea.github_repo, issue.number
+    )
+
+
+async def sync_issue_update(
+    session: AsyncSession, idea: Idea, todo: Todo, user: User
+) -> str | None:
+    """Mirror a to-do's text and done state onto its issue. Best-effort.
+
+    A failure here leaves the board ahead of GitHub, which the next pull
+    corrects in GitHub's favour — the issue always wins in the end.
+    """
+    if todo.github_issue_number is None or not idea.github_repo:
+        return None
+    try:
+        token = await resolve_token(session, idea, user)
+        await update_issue(
+            idea.github_repo,
+            todo.github_issue_number,
+            title=todo.text,
+            state="closed" if todo.done else "open",
+            token=token,
+        )
+        return None
+    except GitHubError as exc:
+        return str(exc)
+
+
 async def sync_pull(session: AsyncSession, idea: Idea, user: User) -> SyncStatus:
     """Best-effort pull of IDEA.md and the tile logo into the idea (git wins).
 
@@ -245,6 +403,11 @@ async def sync_pull(session: AsyncSession, idea: Idea, user: User) -> SyncStatus
                 state.changed = await _apply_file(session, idea, text, sha)
     except GitHubError as exc:
         return SyncStatus(error=str(exc))
+    try:
+        if await _pull_issues(session, idea, token):
+            state.changed = True
+    except GitHubError as exc:
+        state.error = str(exc)
     try:
         if await _pull_logo(session, idea, token):
             state.changed = True

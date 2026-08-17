@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import re
 import time
+from dataclasses import dataclass
 
 import httpx
 
@@ -13,6 +14,9 @@ from app.schemas import GitHubRepoOut
 
 _CACHE_TTL_SECONDS = 300
 _cache: dict[str, tuple[float, GitHubRepoOut]] = {}
+
+# Issues pulled per sync. One page keeps the pull to a single request per open.
+_ISSUE_PAGE_SIZE = 100
 
 
 class GitHubError(Exception):
@@ -273,6 +277,136 @@ async def delete_file(
         if resp.status_code in (401, 403):
             raise GitHubError("GitHub token lacks write access", status_code=403)
         resp.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise GitHubError(f"GitHub request failed: {exc}") from exc
+    finally:
+        if owned_client:
+            await client.aclose()
+
+
+@dataclass(frozen=True)
+class Issue:
+    """The parts of a GitHub issue a to-do is made of."""
+
+    number: int
+    title: str
+    state: str  # "open" | "closed"
+    html_url: str
+
+
+def _issue(data: dict) -> Issue:
+    return Issue(
+        number=data["number"],
+        title=data.get("title") or "",
+        state=data.get("state") or "open",
+        html_url=data.get("html_url") or "",
+    )
+
+
+async def list_issues(
+    repo: str,
+    *,
+    token: str | None = None,
+    client: httpx.AsyncClient | None = None,
+) -> dict[int, Issue]:
+    """Map issue number -> Issue for the repo's most recent issues.
+
+    Pull requests are filtered out: this endpoint returns them alongside issues,
+    and a PR sharing a number with a to-do would otherwise drive its state.
+
+    One page only. A to-do pointing at an issue older than that keeps whatever
+    state it already had rather than being reported wrong, and app-side edits
+    still reach the right issue — only the pull goes stale.
+    """
+    full_name = normalize_repo(repo)
+    owned_client = client is None
+    client = client or httpx.AsyncClient(base_url=settings.github_api_base, timeout=10.0)
+    try:
+        resp = await client.get(
+            f"/repos/{full_name}/issues",
+            params={"state": "all", "per_page": _ISSUE_PAGE_SIZE},
+            headers=_headers(token),
+        )
+        if resp.status_code == 404:
+            return {}
+        if resp.status_code == 403:
+            raise GitHubError("GitHub rate limit or access denied", status_code=403)
+        resp.raise_for_status()
+        return {
+            entry["number"]: _issue(entry)
+            for entry in resp.json()
+            if "pull_request" not in entry
+        }
+    except httpx.HTTPError as exc:
+        raise GitHubError(f"GitHub request failed: {exc}") from exc
+    finally:
+        if owned_client:
+            await client.aclose()
+
+
+async def create_issue(
+    repo: str,
+    title: str,
+    body: str = "",
+    *,
+    token: str | None = None,
+    client: httpx.AsyncClient | None = None,
+) -> Issue:
+    """Open an issue and return it."""
+    full_name = normalize_repo(repo)
+    owned_client = client is None
+    client = client or httpx.AsyncClient(base_url=settings.github_api_base, timeout=10.0)
+    try:
+        resp = await client.post(
+            f"/repos/{full_name}/issues",
+            headers=_headers(token),
+            json={"title": title, "body": body},
+        )
+        if resp.status_code in (401, 403):
+            raise GitHubError("GitHub token lacks issue write access", status_code=403)
+        if resp.status_code == 404:
+            raise GitHubError("Repository not found or no write access", status_code=404)
+        if resp.status_code == 410:
+            raise GitHubError("Issues are disabled for this repository", status_code=400)
+        resp.raise_for_status()
+        return _issue(resp.json())
+    except httpx.HTTPError as exc:
+        raise GitHubError(f"GitHub request failed: {exc}") from exc
+    finally:
+        if owned_client:
+            await client.aclose()
+
+
+async def update_issue(
+    repo: str,
+    number: int,
+    *,
+    title: str | None = None,
+    state: str | None = None,
+    token: str | None = None,
+    client: httpx.AsyncClient | None = None,
+) -> Issue:
+    """Patch an issue's title and/or open/closed state."""
+    body: dict[str, str] = {}
+    if title is not None:
+        body["title"] = title
+    if state is not None:
+        body["state"] = state
+    full_name = normalize_repo(repo)
+    owned_client = client is None
+    client = client or httpx.AsyncClient(base_url=settings.github_api_base, timeout=10.0)
+    try:
+        resp = await client.patch(
+            f"/repos/{full_name}/issues/{number}",
+            headers=_headers(token),
+            json=body,
+        )
+        if resp.status_code == 404:
+            raise GitHubError("Issue not found or no write access", status_code=404)
+        if resp.status_code in (401, 403):
+            raise GitHubError("GitHub token lacks issue write access", status_code=403)
+        resp.raise_for_status()
+        return _issue(resp.json())
     except httpx.HTTPError as exc:
         raise GitHubError(f"GitHub request failed: {exc}") from exc
     finally:
