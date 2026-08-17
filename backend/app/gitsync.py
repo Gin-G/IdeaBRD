@@ -6,7 +6,9 @@ viewing an idea pulls both and overwrites the database copy when they changed;
 edits made in the app are committed back through the Contents API. If the repo
 has no IDEA.md yet, nothing is written until the user explicitly opts in
 (sync_init) — the app never commits a new file to someone's repo unprompted,
-and the same gate covers logo commits.
+and the same gate covers logo commits. Deleting IDEA.md in git puts the idea
+back in that untracked state, so removing the file is a real opt-out rather
+than something the next app edit undoes.
 
 The logo pull is what makes a repo carry its own tile: link a repo that already
 has an idea_logo.png and the tile picks the image up without anyone uploading
@@ -40,7 +42,7 @@ COMMIT_AUTHOR_NOTE = "via IdeaBRD"
 
 @dataclass
 class SyncStatus:
-    changed: bool = False  # pull rewrote idea content
+    changed: bool = False  # pull rewrote the idea (content or tracking state)
     file_missing: bool = False  # repo has no IDEA.md (tracking not started)
     error: str | None = None
 
@@ -214,8 +216,9 @@ async def sync_pull(session: AsyncSession, idea: Idea, user: User) -> SyncStatus
     """Best-effort pull of IDEA.md and the tile logo into the idea (git wins).
 
     A missing IDEA.md is reported, never created — creating it is an explicit
-    user choice (sync_init). The logo is pulled either way: adopting artwork the
-    repo already carries doesn't write anything back.
+    user choice (sync_init), whether the repo never had one or the file was
+    deleted there. The logo is pulled either way: adopting artwork the repo
+    already carries doesn't write anything back.
     """
     if not idea.github_repo:
         return SyncStatus()
@@ -225,6 +228,15 @@ async def sync_pull(session: AsyncSession, idea: Idea, user: User) -> SyncStatus
         found = await get_file(idea.github_repo, IDEA_FILE, token=token)
         if found is None:
             state.file_missing = True
+            if idea.github_file_sha is not None:
+                # Tracked until now, deleted in git since: drop the tracking
+                # state, the same way a deleted logo is dropped. Keeping the
+                # stale sha would leave the page claiming the file is there and
+                # would let the next app edit push it back — recreating a file
+                # the user removed, without ever asking.
+                idea.github_file_sha = None
+                idea.git_synced_at = None
+                state.changed = True
         else:
             text, sha = found
             if sha == idea.github_file_sha:

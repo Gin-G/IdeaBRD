@@ -200,6 +200,47 @@ async def test_get_pulls_from_git_and_git_wins(users, make_client):
 
 @pytest.mark.asyncio
 @respx.mock
+async def test_pull_untracks_a_deleted_idea_file(users, make_client):
+    """Deleting IDEA.md in the repo puts the idea back in the untracked state.
+
+    Tracking is read off the stored sha, so a sha left behind by the last good
+    pull keeps the page claiming the file is still there — and keeps app edits
+    pushing, which commits the file the user deleted straight back.
+    """
+    client = make_client(users["a"])
+    idea_id = await _create_tracked_idea(client, respx)
+
+    respx.get(CONTENTS).mock(
+        return_value=httpx.Response(404, json={"message": "Not Found"})
+    )
+    put_route = respx.put(CONTENTS).mock(
+        return_value=httpx.Response(200, json={"content": {"sha": "recreated-sha"}})
+    )
+    # Re-mocking a pattern returns the same respx route, so the seed commit is
+    # still on its ledger — count pushes from here rather than asserting called.
+    seeded = put_route.call_count
+
+    resp = await client.get(f"/api/ideas/{idea_id}")
+    assert resp.status_code == 200
+    assert resp.json()["git_file_missing"] is True
+    assert resp.json()["git_synced_at"] is None
+
+    # ...so an app edit keeps to itself instead of recreating the file.
+    resp = await client.patch(f"/api/ideas/{idea_id}", json={"notes": "local again"})
+    assert resp.status_code == 200
+    assert resp.json()["git_file_missing"] is True
+    assert put_route.call_count == seeded
+
+    # Putting it back is the same explicit opt-in as the first time.
+    resp = await client.post(f"/api/ideas/{idea_id}/sync?init=true")
+    assert resp.status_code == 200
+    assert resp.json()["git_file_missing"] is False
+    assert put_route.call_count == seeded + 1
+    assert "local again" in _pushed_content(put_route.calls.last.request)
+
+
+@pytest.mark.asyncio
+@respx.mock
 async def test_pull_drops_todos_removed_from_the_file(users, make_client):
     """To-dos deleted or reworded in IDEA.md must not linger on the board.
 
