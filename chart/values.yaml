@@ -51,6 +51,18 @@ db:
   instances: 1
   size: 10Gi
   # OpenBao path holding the superuser + app-user credentials
+  # Bounds added 2026-08-18. Observed peak working set was 60Mi
+  # (postgres runs shared_buffers=128MB + work_mem=4MB), so 256Mi requests
+  # sits above real usage and the 1Gi limit leaves ~10x headroom for vacuum,
+  # index builds and query bursts. CPU limit is loose on purpose: throttling
+  # a database is worse than the overcommit it prevents.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
   secretPath: ideabrd/db
   app:
     name: ideabrd            # database name

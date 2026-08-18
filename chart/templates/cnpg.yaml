@@ -11,6 +11,11 @@ spec:
   storage:
     size: {{ .Values.db.size }}
 
+  {{- with .Values.db.resources }}
+  resources:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+
   # Enable superuser access, credentials supplied by the superuser ExternalSecret
   enableSuperuserAccess: true
   superuserSecret:
