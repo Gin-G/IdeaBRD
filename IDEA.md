@@ -1,6 +1,6 @@
 ---
 status: active
-progress: 90
+progress: 75
 ---
 
 # IdeaBRD
@@ -52,7 +52,9 @@ projects. FastAPI + async SQLAlchemy on Postgres (CNPG), SvelteKit + Tailwind
 front end, deployed to Kubernetes by Argo CD with secrets from OpenBao. Backend
 lives in `backend/app`, the UI in `frontend/src`, the chart in `chart/`;
 `docker-compose.yml` runs the whole stack locally and `backend/tests` holds the
-pytest suite.
+pytest suite. Moving to a git-only model next: a central board repo becomes the
+source of truth so an Android app can run standalone, with the database
+dual-written and kept authoritative until the repo has proven itself.
 
 ## Todos
 
@@ -77,3 +79,20 @@ pytest suite.
 - [ ] Mount the to-do list in `IdeaModal.svelte` too; the promote action only exists on the full idea page
 - [ ] Decide on GitHub Projects v2 — GraphQL-only so none of `app/github.py` is reusable, needs the `project` scope added (every existing GitHub identity has to re-authorize, since OAuth tokens don't gain scopes), and projects are user/org-owned so an idea needs its own project id plus a per-project Status field option mapping
 - [ ] Back up the Postgres cluster — it runs a single CNPG instance with no replica
+- [x] Define the board repo layout — one directory per idea and no manifest, with order and colour in each idea's own frontmatter, so moving a tile rewrites one file instead of a file every board shares
+- [x] Give every idea a stable id that outlives Postgres and backfill it, since a serial primary key can't be the identity a git-only board is keyed by
+- [x] Publish the whole board to the central repo, so a complete git copy exists before anything is asked to depend on it
+- [ ] Dual-write every idea mutation to the board repo, leaving the database authoritative while the git copy earns trust
+- [ ] Reconcile the board repo against the database and report the diff, so cutover is a decision backed by evidence rather than a leap
+- [ ] Port `ideafile.py` to Kotlin with its tests — the load-bearing spike, since the phone owns parsing once no server does
+- [ ] Merge IDEA.md semantically rather than by line: parse both sides, match to-dos the way `_apply_todos` already does, re-render
+- [ ] Ship the existing SvelteKit SPA as an Android app via Capacitor, with a native plugin for JGit and Keystore-backed tokens
+- [ ] Authenticate on device with the GitHub device flow, since an app distributed to users can't ship a client secret
+- [ ] Cut over to git as the only store and retire the database, chart and cluster once the board repo has proven itself
+- [x] Name a shared idea on a collaborator's board — slugs are unique per owner, so an idea shared onto a board that already has that directory has nowhere to go
+- [ ] Refuse to publish over a board repo that moved since last time — `board_commit_sha` is recorded on every publish and read by nothing, so a direct edit to the repo is silently overwritten
+- [ ] Let collaboration be git's: two people who both link an idea's repo collaborate there by branch and PR, so IdeaCollaborator, IdeaInvitation and roles retire at cutover in favour of repo permissions
+- [ ] Promote a note-only idea to its own repo — an idea kept inside a board repo has nowhere for anyone else to link, so giving it a repo is what sharing now means
+- [ ] Say in a board repo's copy of a linked idea that it is a cache and the linked repo wins, the same way every IDEA.md already carries its own format rules
+- [ ] Show open pull requests on a repo-linked tile, now that a PR is where an idea's collaboration actually happens
+- [x] Create a board repo from the app on first run — pick the account or org, get an empty repo, and publish the existing board into it as that repo's first commit

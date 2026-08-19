@@ -91,6 +91,35 @@ export interface GitHubRepo {
 	last_commit_message: string | null;
 }
 
+/** Where a board is published as files, and what happened last time. */
+export interface Board {
+	board_repo: string | null;
+	board_branch: string | null;
+	board_commit_sha: string | null;
+	board_published_at: string | null;
+}
+
+export interface BoardOwner {
+	login: string;
+	kind: 'user' | 'org';
+}
+
+export interface BoardOwners {
+	owners: BoardOwner[];
+	/** False when the GitHub login predates the read:org scope. */
+	orgs_visible: boolean;
+}
+
+export interface PublishResult {
+	committed: boolean;
+	commit_sha: string | null;
+	written: string[];
+	removed: string[];
+	/** The repo holds files but isn't a board yet; publishing needs opting in. */
+	needs_opt_in: boolean;
+	error: string | null;
+}
+
 export const STATUSES: { value: Status; label: string }[] = [
 	{ value: 'idea', label: 'Idea' },
 	{ value: 'active', label: 'Active' },

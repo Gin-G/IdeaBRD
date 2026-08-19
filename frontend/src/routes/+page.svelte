@@ -6,14 +6,29 @@
 	import type { Idea, IdeaSummary } from '$lib/types';
 	import Tile from '$lib/components/Tile.svelte';
 	import IdeaModal from '$lib/components/IdeaModal.svelte';
+	import BoardPanel from '$lib/components/BoardPanel.svelte';
 
 	let ideas = $state<IdeaSummary[]>([]);
 	let loading = $state(true);
 	let error = $state('');
 	let showModal = $state(false);
+	let showBoardSetup = $state(false);
+	// Null board_repo means this board has never been given a repo. The prompt
+	// is dismissible: a board works perfectly well without one.
+	let needsBoardRepo = $state(false);
+	let promptDismissed = $state(false);
 
 	let dragIndex = $state<number | null>(null);
 	let savingOrder = $state(false);
+
+	async function checkBoardRepo() {
+		try {
+			needsBoardRepo = !(await api.board()).board_repo;
+		} catch {
+			// Board settings are a nicety; never let them break the board itself.
+			needsBoardRepo = false;
+		}
+	}
 
 	async function load() {
 		try {
@@ -28,6 +43,7 @@
 
 	onMount(() => {
 		load();
+		checkBoardRepo();
 		// Any live event may affect the board (shares, edits, deletes); just refetch.
 		return onRealtime(() => {
 			// Refetching mid-drag, or before the new order is saved, snaps tiles back.
@@ -116,6 +132,23 @@
 	</button>
 </div>
 
+{#if needsBoardRepo && !promptDismissed && !loading && ideas.length > 0}
+	<div
+		class="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-500/30 bg-indigo-500/10 p-4"
+	>
+		<div class="min-w-0">
+			<p class="text-sm font-semibold text-indigo-200">Keep this board in git</p>
+			<p class="mt-0.5 text-sm text-slate-400">
+				Publish every idea to a repo you own — one directory each, yours to clone.
+			</p>
+		</div>
+		<div class="flex gap-2">
+			<button class="btn-ghost" onclick={() => (promptDismissed = true)}>Not now</button>
+			<button class="btn-primary" onclick={() => (showBoardSetup = true)}>Set up repo</button>
+		</div>
+	</div>
+{/if}
+
 {#if loading}
 	<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
 		{#each Array(4) as _}
@@ -157,6 +190,15 @@
 			</span>
 		</button>
 	</div>
+{/if}
+
+{#if showBoardSetup}
+	<BoardPanel
+		onclose={() => (showBoardSetup = false)}
+		oninit={() => {
+			needsBoardRepo = false;
+		}}
+	/>
 {/if}
 
 {#if showModal}

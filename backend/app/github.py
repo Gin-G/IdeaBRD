@@ -417,3 +417,319 @@ async def update_issue(
 def clear_cache() -> None:
     """Test helper to reset the in-memory cache."""
     _cache.clear()
+
+
+# --- Git Data API --------------------------------------------------------
+#
+# The Contents API commits one file at a time, which is the right shape for
+# syncing a single IDEA.md but the wrong one for publishing a board: twenty
+# tiles would mean twenty commits, and a failure halfway leaves the repo in a
+# state that is neither the old board nor the new one. Building a tree instead
+# makes a publish one commit that either lands or doesn't.
+
+FILE_MODE = "100644"
+
+
+async def get_tree(
+    repo: str,
+    ref: str,
+    *,
+    token: str | None = None,
+    client: httpx.AsyncClient | None = None,
+) -> dict[str, str]:
+    """Map every file path in a commit's tree to its blob sha, recursively.
+
+    One request answers "what does the board look like right now?", so a publish
+    can write only what actually changed without fetching a single file.
+    """
+    full_name = normalize_repo(repo)
+    owned_client = client is None
+    client = client or httpx.AsyncClient(base_url=settings.github_api_base, timeout=30.0)
+    try:
+        resp = await client.get(
+            f"/repos/{full_name}/git/trees/{ref}",
+            params={"recursive": "1"},
+            headers=_headers(token),
+        )
+        if resp.status_code == 404:
+            return {}
+        if resp.status_code == 403:
+            raise GitHubError("GitHub rate limit or access denied", status_code=403)
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("truncated"):
+            # A truncated listing would make the diff below look like a pile of
+            # deletions, so refuse rather than publish from a partial picture.
+            raise GitHubError("Repository tree too large to publish into")
+        return {
+            entry["path"]: entry["sha"]
+            for entry in data.get("tree", ())
+            if entry.get("type") == "blob"
+        }
+    except httpx.HTTPError as exc:
+        raise GitHubError(f"GitHub request failed: {exc}") from exc
+    finally:
+        if owned_client:
+            await client.aclose()
+
+
+async def get_ref(
+    repo: str,
+    branch: str,
+    *,
+    token: str | None = None,
+    client: httpx.AsyncClient | None = None,
+) -> str | None:
+    """Commit sha a branch points at, or None if the branch doesn't exist yet.
+
+    None is the ordinary state of a freshly created repo, not an error.
+    """
+    full_name = normalize_repo(repo)
+    owned_client = client is None
+    client = client or httpx.AsyncClient(base_url=settings.github_api_base, timeout=10.0)
+    try:
+        resp = await client.get(
+            f"/repos/{full_name}/git/ref/heads/{branch}", headers=_headers(token)
+        )
+        if resp.status_code in (404, 409):  # 409 = repo exists but is empty
+            return None
+        if resp.status_code == 403:
+            raise GitHubError("GitHub rate limit or access denied", status_code=403)
+        resp.raise_for_status()
+        return resp.json()["object"]["sha"]
+    except httpx.HTTPError as exc:
+        raise GitHubError(f"GitHub request failed: {exc}") from exc
+    finally:
+        if owned_client:
+            await client.aclose()
+
+
+async def _post(
+    repo: str,
+    path: str,
+    body: dict,
+    *,
+    token: str | None,
+    client: httpx.AsyncClient | None,
+    method: str = "POST",
+) -> dict:
+    """POST/PATCH to a git data endpoint, mapping failures the way callers expect."""
+    full_name = normalize_repo(repo)
+    owned_client = client is None
+    client = client or httpx.AsyncClient(base_url=settings.github_api_base, timeout=30.0)
+    try:
+        resp = await client.request(
+            method, f"/repos/{full_name}{path}", headers=_headers(token), json=body
+        )
+        if resp.status_code in (401, 403):
+            raise GitHubError("GitHub token lacks write access", status_code=403)
+        if resp.status_code == 404:
+            raise GitHubError("Repository not found or no write access", status_code=404)
+        if resp.status_code in (409, 422):
+            raise GitHubError("Board changed on GitHub since last publish", status_code=409)
+        resp.raise_for_status()
+        return resp.json()
+    except httpx.HTTPError as exc:
+        raise GitHubError(f"GitHub request failed: {exc}") from exc
+    finally:
+        if owned_client:
+            await client.aclose()
+
+
+async def create_blob(
+    repo: str,
+    content: bytes,
+    *,
+    token: str | None = None,
+    client: httpx.AsyncClient | None = None,
+) -> str:
+    """Upload one file's bytes and return its blob sha, committing nothing."""
+    data = await _post(
+        repo,
+        "/git/blobs",
+        {"content": base64.b64encode(content).decode("ascii"), "encoding": "base64"},
+        token=token,
+        client=client,
+    )
+    return data["sha"]
+
+
+async def create_tree(
+    repo: str,
+    entries: list[dict],
+    *,
+    base_tree: str | None = None,
+    token: str | None = None,
+    client: httpx.AsyncClient | None = None,
+) -> str:
+    """Build a tree from ``entries`` layered over ``base_tree``.
+
+    An entry with a null sha removes that path, which is how a tile that left
+    the board takes its directory with it — git has no empty directories, so
+    removing every file under one is the same as removing the directory.
+    """
+    body: dict = {"tree": entries}
+    if base_tree:
+        body["base_tree"] = base_tree
+    data = await _post(repo, "/git/trees", body, token=token, client=client)
+    return data["sha"]
+
+
+async def create_commit(
+    repo: str,
+    message: str,
+    tree: str,
+    parents: list[str],
+    *,
+    token: str | None = None,
+    client: httpx.AsyncClient | None = None,
+) -> str:
+    data = await _post(
+        repo,
+        "/git/commits",
+        {"message": message, "tree": tree, "parents": parents},
+        token=token,
+        client=client,
+    )
+    return data["sha"]
+
+
+async def update_ref(
+    repo: str,
+    branch: str,
+    sha: str,
+    *,
+    create: bool = False,
+    token: str | None = None,
+    client: httpx.AsyncClient | None = None,
+) -> None:
+    """Move a branch to a commit, or create it when the repo has no commits yet.
+
+    Never forced: a rejected fast-forward means someone else moved the branch,
+    and overwriting that is precisely the data loss this is meant to avoid.
+    """
+    if create:
+        await _post(
+            repo,
+            "/git/refs",
+            {"ref": f"refs/heads/{branch}", "sha": sha},
+            token=token,
+            client=client,
+        )
+        return
+    await _post(
+        repo,
+        f"/git/refs/heads/{branch}",
+        {"sha": sha, "force": False},
+        token=token,
+        client=client,
+        method="PATCH",
+    )
+
+
+# --- Account and repo creation ------------------------------------------
+#
+# Used once, when a board is first given somewhere to live.
+
+
+async def whoami(
+    token: str, *, client: httpx.AsyncClient | None = None
+) -> tuple[str, set[str]]:
+    """The token's own login and the scopes it was actually granted.
+
+    Scopes are read from the response header rather than assumed, because a
+    token minted before the app asked for ``read:org`` keeps the scopes it had:
+    the only way to know what an existing login can do is to ask.
+    """
+    owned_client = client is None
+    client = client or httpx.AsyncClient(base_url=settings.github_api_base, timeout=10.0)
+    try:
+        resp = await client.get("/user", headers=_headers(token))
+        if resp.status_code in (401, 403):
+            raise GitHubError("GitHub token is not valid", status_code=403)
+        resp.raise_for_status()
+        granted = {
+            s.strip()
+            for s in resp.headers.get("X-OAuth-Scopes", "").split(",")
+            if s.strip()
+        }
+        return resp.json()["login"], granted
+    except httpx.HTTPError as exc:
+        raise GitHubError(f"GitHub request failed: {exc}") from exc
+    finally:
+        if owned_client:
+            await client.aclose()
+
+
+async def list_orgs(
+    token: str, *, client: httpx.AsyncClient | None = None
+) -> list[str]:
+    """Organisations the token can see. Empty without the ``read:org`` scope."""
+    owned_client = client is None
+    client = client or httpx.AsyncClient(base_url=settings.github_api_base, timeout=10.0)
+    try:
+        resp = await client.get(
+            "/user/orgs", params={"per_page": 100}, headers=_headers(token)
+        )
+        if resp.status_code in (401, 403):
+            return []
+        resp.raise_for_status()
+        return [org["login"] for org in resp.json()]
+    except httpx.HTTPError as exc:
+        raise GitHubError(f"GitHub request failed: {exc}") from exc
+    finally:
+        if owned_client:
+            await client.aclose()
+
+
+async def create_repo(
+    name: str,
+    *,
+    org: str | None = None,
+    private: bool = True,
+    description: str | None = None,
+    token: str | None = None,
+    client: httpx.AsyncClient | None = None,
+) -> tuple[str, str]:
+    """Create a repo under the user or an org. Returns (full_name, default_branch).
+
+    Created without a README on purpose: an auto-initialised repo arrives with a
+    commit the board didn't make, which the publisher would then treat as
+    somebody else's content and refuse to write into. Left empty, the board's
+    own first publish is the repo's first commit.
+    """
+    path = f"/orgs/{org}/repos" if org else "/user/repos"
+    body: dict = {"name": name, "private": private, "auto_init": False}
+    if description:
+        body["description"] = description
+    owned_client = client is None
+    client = client or httpx.AsyncClient(base_url=settings.github_api_base, timeout=15.0)
+    try:
+        resp = await client.post(path, headers=_headers(token), json=body)
+        if resp.status_code == 422:
+            detail = ""
+            try:
+                detail = "; ".join(
+                    e.get("message", "") for e in resp.json().get("errors", ())
+                )
+            except ValueError:
+                pass
+            raise GitHubError(
+                detail or f"A repository named {name!r} already exists", status_code=422
+            )
+        if resp.status_code in (401, 403):
+            raise GitHubError(
+                "GitHub token cannot create repositories here", status_code=403
+            )
+        if resp.status_code == 404:
+            raise GitHubError(
+                f"Organisation {org!r} not found or not accessible", status_code=404
+            )
+        resp.raise_for_status()
+        data = resp.json()
+        return data["full_name"], data.get("default_branch") or "main"
+    except httpx.HTTPError as exc:
+        raise GitHubError(f"GitHub request failed: {exc}") from exc
+    finally:
+        if owned_client:
+            await client.aclose()

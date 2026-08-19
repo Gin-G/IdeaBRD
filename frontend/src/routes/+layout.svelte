@@ -4,9 +4,11 @@
 	import { auth, loadUser } from '$lib/auth.svelte';
 	import { api, redirectToLogin, redirectToGithubLogin } from '$lib/api';
 	import AccountPanel from '$lib/components/AccountPanel.svelte';
+	import BoardPanel from '$lib/components/BoardPanel.svelte';
 
 	let { children } = $props();
 	let showAccount = $state(false);
+	let showBoard = $state(false);
 
 	onMount(loadUser);
 
@@ -42,6 +44,9 @@
 						<span class="hidden text-sm text-slate-300 sm:block"
 							>{auth.user.name ?? auth.user.email}</span
 						>
+					</button>
+					<button class="btn-ghost" onclick={() => (showBoard = true)} title="Board repo">
+						Board repo
 					</button>
 					<button class="btn-ghost" onclick={logout}>Sign out</button>
 				</div>
@@ -83,6 +88,10 @@
 			{@render children()}
 		{/if}
 	</main>
+
+	{#if showBoard}
+		<BoardPanel onclose={() => (showBoard = false)} />
+	{/if}
 
 	{#if showAccount}
 		<AccountPanel onclose={() => (showAccount = false)} />

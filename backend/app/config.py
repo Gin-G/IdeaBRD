@@ -51,7 +51,9 @@ class Settings(BaseSettings):
     github_client_id: str = ""
     github_client_secret: str = ""
     github_redirect_url: str = "http://localhost:8000/api/auth/github/callback"
-    github_scope: str = "read:user user:email repo"
+    # read:org only lists the organisations a board could be created in; a
+    # token granted before it was asked for keeps working, minus that list.
+    github_scope: str = "read:user user:email repo read:org"
 
     @property
     def auth_enabled(self) -> bool:

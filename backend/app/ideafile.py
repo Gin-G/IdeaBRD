@@ -35,7 +35,16 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import NamedTuple
 
+from app.rank import is_rank
+from app.repo_ref import InvalidRepoRef, normalize_repo
+
 VALID_STATUSES = ("idea", "active", "paused", "done")
+
+# Board-level frontmatter, written only into a board repo's copy of an idea —
+# see app.boardrepo. A linked repo's own IDEA.md must never carry these: rank
+# and colour belong to whoever's board the tile sits on, and a shared idea sits
+# on several boards at different positions.
+_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 
 _TODO_RE = re.compile(r"^\s*[-*]\s*\[( |x|X)\]\s*(.*\S)\s*$")
 _TODOS_HEADING_RE = re.compile(r"^##\s+to-?dos\s*$", re.IGNORECASE)
@@ -126,6 +135,11 @@ class ParsedIdeaFile:
     notes: str = ""
     status: str | None = None
     progress: int | None = None
+    # Board-level keys; None when the file is a linked repo's own IDEA.md,
+    # which carries the idea but not anyone's board position for it.
+    color: str | None = None
+    rank: str | None = None
+    repo: str | None = None
     # In file order.
     todos: list[ParsedTodo] = field(default_factory=list)
 
@@ -138,17 +152,32 @@ def render_idea_file(
     progress: int,
     todos: Sequence[TodoInput],
     guidance: bool = True,
+    color: str | None = None,
+    rank: str | None = None,
+    repo: str | None = None,
 ) -> str:
     """Render the idea as IDEA.md.
 
     The ``## Todos`` heading is always written, empty list or not: a heading
     that is already there gets filled in, where a missing one gets invented
     under whatever name the editor guesses (and then parsed as notes).
+
+    ``color``, ``rank`` and ``repo`` are omitted unless given, so the file the
+    board repo writes can carry a tile's position while the same renderer keeps
+    writing linked repos exactly as it did before.
     """
     lines = [
         "---",
         f"status: {status}",
         f"progress: {progress}",
+    ]
+    if color is not None:
+        lines.append(f"color: {color}")
+    if rank is not None:
+        lines.append(f"rank: {rank}")
+    if repo is not None:
+        lines.append(f"repo: {repo}")
+    lines += [
         "---",
         "",
         f"# {title}",
@@ -201,6 +230,18 @@ def parse_idea_file(text: str) -> ParsedIdeaFile:
         try:
             parsed.progress = max(0, min(100, int(float(fm["progress"]))))
         except ValueError:
+            pass
+    # Board-level keys are validated and otherwise dropped, in keeping with the
+    # rest of the parser: a hand-edited colour or rank that can't be used should
+    # cost that one field, not the file.
+    if _COLOR_RE.match(fm.get("color", "")):
+        parsed.color = fm["color"].lower()
+    if is_rank(fm.get("rank", "")):
+        parsed.rank = fm["rank"]
+    if "repo" in fm:
+        try:
+            parsed.repo = normalize_repo(fm["repo"])
+        except InvalidRepoRef:
             pass
 
     note_lines: list[str] = []

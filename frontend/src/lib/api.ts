@@ -1,10 +1,13 @@
 import type {
+	Board,
+	BoardOwners,
 	Collaborator,
 	GitHubRepo,
 	Idea,
 	IdeaSummary,
 	Identity,
 	Providers,
+	PublishResult,
 	Role,
 	Todo,
 	User
@@ -110,6 +113,20 @@ export const api = {
 	},
 	deleteLogo: (ideaId: number) =>
 		request<Idea>(`/api/ideas/${ideaId}/logo`, { method: 'DELETE' }),
+
+	board: () => request<Board>('/api/board'),
+	boardOwners: () => request<BoardOwners>('/api/board/owners'),
+	/** Create a fresh repo for this board and publish into it. */
+	initBoard: (name: string, org: string | null, isPrivate: boolean) =>
+		request<{ board: Board; publish: PublishResult }>('/api/board/init', {
+			method: 'POST',
+			body: JSON.stringify({ name, org, private: isPrivate })
+		}),
+	setBoardRepo: (repo: string | null) =>
+		request<Board>('/api/board', { method: 'PUT', body: JSON.stringify({ board_repo: repo }) }),
+	/** Write the board to its repo. optIn accepts a repo that holds other files. */
+	publishBoard: (optIn = false) =>
+		request<PublishResult>(`/api/board/publish?opt_in=${optIn}`, { method: 'POST' }),
 
 	listCollaborators: (ideaId: number) =>
 		request<Collaborator[]>(`/api/ideas/${ideaId}/collaborators`),

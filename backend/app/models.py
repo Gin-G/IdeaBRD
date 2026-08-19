@@ -32,6 +32,17 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(320))
     name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    # The user's board repo: where the whole board is published as files, in the
+    # layout app.boardrepo describes. Null until they choose one — the board
+    # lives in Postgres either way, and git is a second copy until it is trusted.
+    board_repo: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    board_branch: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Commit this board was last published as, so a later read can tell our own
+    # writes apart from someone editing the repo directly.
+    board_commit_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    board_published_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -71,6 +82,7 @@ class Identity(Base):
 
 class Idea(Base):
     __tablename__ = "ideas"
+    __table_args__ = (UniqueConstraint("user_id", "slug", name="uq_idea_user_slug"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(
@@ -95,6 +107,13 @@ class Idea(Base):
         DateTime(timezone=True), nullable=True
     )
     position: Mapped[int] = mapped_column(Integer, default=0)
+    # Board-repo identity: the directory this idea occupies (ideas/<slug>/) and
+    # its fractional rank on the owner's board. Both are assigned by the
+    # publisher rather than the request path, so nothing about the live site's
+    # writes changes while the git copy is still earning trust. Null means the
+    # idea has never been published. See app.boardrepo and app.rank.
+    slug: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    rank: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -166,7 +185,10 @@ class IdeaCollaborator(Base):
     """A user (other than the owner) granted access to a single idea."""
 
     __tablename__ = "idea_collaborators"
-    __table_args__ = (UniqueConstraint("idea_id", "user_id", name="uq_idea_user"),)
+    __table_args__ = (
+        UniqueConstraint("idea_id", "user_id", name="uq_idea_user"),
+        UniqueConstraint("user_id", "slug", name="uq_collab_user_slug"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     idea_id: Mapped[int] = mapped_column(
@@ -178,6 +200,14 @@ class IdeaCollaborator(Base):
     role: Mapped[str] = mapped_column(String(10), default=ROLE_EDITOR)
     # The collaborator's own grid position on their board.
     position: Mapped[int] = mapped_column(Integer, default=0)
+    # ...and its fractional form, for the collaborator's own board repo. A
+    # shared idea sits at a different place on every board that carries it,
+    # which is exactly why rank can't live in the idea's own file.
+    rank: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Directory this idea occupies on *this* collaborator's board. Idea.slug is
+    # only unique per owner, so a shared idea can arrive at a board that already
+    # has that directory; it gets its own name here rather than a collision.
+    slug: Mapped[str | None] = mapped_column(String(60), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

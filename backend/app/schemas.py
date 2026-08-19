@@ -175,3 +175,62 @@ class GitHubRepoOut(BaseModel):
     default_branch: str
     pushed_at: str | None = None
     last_commit_message: str | None = None
+
+
+# ---- Board repo ----
+
+
+class BoardOut(BaseModel):
+    """Where a user's board is published, and what happened last time."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    board_repo: str | None = None
+    board_branch: str | None = None
+    board_commit_sha: str | None = None
+    board_published_at: datetime | None = None
+
+
+class BoardRepoUpdate(BaseModel):
+    # Blank clears the link, matching how an idea's own repo is unset.
+    board_repo: str | None = None
+
+    _normalize = field_validator("board_repo")(_normalized_repo)
+
+
+class PublishOut(BaseModel):
+    """Outcome of a publish. ``committed`` is false when nothing had changed."""
+
+    committed: bool = False
+    commit_sha: str | None = None
+    written: list[str] = Field(default_factory=list)
+    removed: list[str] = Field(default_factory=list)
+    # The repo holds files but isn't a board yet; publishing needs opt_in.
+    needs_opt_in: bool = False
+    error: str | None = None
+
+
+class BoardOwner(BaseModel):
+    """Somewhere a board repo could be created."""
+
+    login: str
+    kind: str  # "user" | "org"
+
+
+class BoardOwnersOut(BaseModel):
+    owners: list[BoardOwner] = Field(default_factory=list)
+    # False when the GitHub login predates the read:org scope, in which case
+    # only the personal account is listed and reconnecting adds the rest.
+    orgs_visible: bool = True
+
+
+class BoardInit(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    # Blank/None means the user's own account rather than an organisation.
+    org: str | None = None
+    private: bool = True
+
+
+class BoardInitOut(BaseModel):
+    board: BoardOut
+    publish: PublishOut
