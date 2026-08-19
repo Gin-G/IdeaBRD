@@ -38,7 +38,7 @@ backend:
   # OpenBao path holding the GitHub OAuth app credentials (client_id, client_secret)
   githubSecretPath: ideabrd/github
   container:
-    image: docker.io/ncging/ideabrd-backend:2026-08-17.21.37
+    image: docker.io/ncging/ideabrd-backend:2026-08-19.23.07
     imagePullPolicy: Always
     port: 8000
     cpu: "500m"
