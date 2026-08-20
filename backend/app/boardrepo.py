@@ -107,3 +107,93 @@ def idea_file_path(slug: str) -> str:
 def logo_path(slug: str, filename: str) -> str:
     """Path for a tile logo already named by ``app.logos.logo_path_for``."""
     return f"{IDEAS_DIR}/{slug}/{filename}"
+
+
+README_FILE = "README.md"
+REPO_DESCRIPTION = "IdeaBRD board"
+# Marks the README as one this app wrote, so a later publish knows it may
+# rewrite it. Without it, a README somebody wrote themselves would be
+# indistinguishable from ours and would eventually be overwritten.
+README_SENTINEL = "<!-- Managed by IdeaBRD. Edit the ideas, not this file. -->"
+
+
+def github_stub_readmes(repo: str) -> set[bytes]:
+    """The README GitHub writes when it initialises a repo, in both its forms.
+
+    A repo the app just created carries one of these, and replacing it with
+    something useful is the point. Matching it exactly rather than guessing at
+    "looks like a stub" keeps a README anyone wrote themselves out of reach.
+    """
+    name = repo.split("/")[-1]
+    return {
+        f"# {name}\n".encode(),
+        f"# {name}\n\n{REPO_DESCRIPTION}\n".encode(),
+    }
+
+
+def render_readme(login: str | None, repo: str) -> bytes:
+    """The board's own README: what this repo is, and how to read it.
+
+    Whoever opens this repo — a person, or an agent handed the URL — sees only
+    the files, so the layout has to explain itself here the same way each
+    IDEA.md carries its own format rules.
+    """
+    owner = f"{login}'s" if login else "An"
+    return f"""# {owner} idea board
+
+{README_SENTINEL}
+
+This repository *is* the board. Every idea is a directory, so the whole thing
+can be cloned, read and edited without the app running.
+
+## Layout
+
+```
+{MARKER_FILE}                     format version
+{IDEAS_DIR}/<slug>/{IDEA_FILE}         one idea
+{IDEAS_DIR}/<slug>/idea_logo.png   its tile image, when it has one
+```
+
+A slug is assigned once and never follows the title around: renaming a
+directory in git is a delete plus an add, and every clone would have to
+reconcile it.
+
+## An idea
+
+```markdown
+---
+status: active
+progress: 60
+color: "#6366f1"
+rank: "a0m"
+repo: owner/name
+---
+
+# Title
+
+Notes, shown on the tile.
+
+## Todos
+
+- [x] done item
+- [ ] open item
+```
+
+`status`, `progress`, the title, the notes and the to-dos are the idea itself.
+
+`color` and `rank` belong to *this* board rather than to the idea. `rank` is a
+fractional key compared as plain text, never as a number — it is what lets a
+tile move without renumbering every file below it, so reordering the board
+rewrites one file.
+
+`repo` means the idea has a repository of its own. That repository's own
+`{IDEA_FILE}` is the one that wins; the copy here is a cache of it, and it is
+where anyone collaborating on that idea should be working.
+
+## Editing
+
+Edits made here are **overwritten on the next publish**. The app still keeps the
+board in its database and treats that as the source of truth, publishing this
+repo from it — so this copy is for reading, cloning and reviewing, not yet for
+writing back. That changes when the app reads this repo as authoritative.
+""".encode()

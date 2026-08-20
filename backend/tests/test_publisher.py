@@ -12,7 +12,7 @@ import httpx
 import pytest
 import respx
 
-from app.boardrepo import MARKER_FILE
+from app.boardrepo import MARKER_FILE, README_FILE, README_SENTINEL, render_readme
 from app.ideafile import parse_idea_file
 from app.publisher import blob_sha, diff, marker_content, publish_board
 from app.rank import initial
@@ -63,6 +63,7 @@ class FakeRepo:
         base = f"{BASE}/repos/{self.repo}"
         mock.get(url__regex=rf"{base}/git/ref/heads/.*").mock(side_effect=self._ref)
         mock.get(url__regex=rf"{base}/git/trees/.*").mock(side_effect=self._get_tree)
+        mock.get(url__regex=rf"{base}/git/blobs/.*").mock(side_effect=self._get_blob)
         mock.post(f"{base}/git/blobs").mock(side_effect=self._blob)
         mock.post(f"{base}/git/trees").mock(side_effect=self._put_tree)
         mock.post(f"{base}/git/commits").mock(side_effect=self._commit)
@@ -88,6 +89,17 @@ class FakeRepo:
                     for p, s in self.tree().items()
                 ],
             },
+        )
+
+    def _get_blob(self, request):
+        sha = str(request.url).rsplit("/", 1)[1]
+        data = next(
+            (d for d in self.files.values() if blob_sha(d) == sha),
+            self.blobs.get(sha, b""),
+        )
+        return httpx.Response(
+            200,
+            json={"encoding": "base64", "content": base64.b64encode(data).decode()},
         )
 
     def _blob(self, request):
@@ -180,6 +192,7 @@ async def test_first_publish_writes_the_whole_board(users, make_client):
     assert result.committed and result.error is None
     assert repo.commits == 1, "a board is one commit, not one per file"
     assert set(repo.files) == {
+        README_FILE,
         MARKER_FILE,
         "ideas/ideabrd/IDEA.md",
         "ideas/second/IDEA.md",
@@ -362,6 +375,7 @@ async def test_a_shared_idea_gets_its_own_name_on_the_board(users, make_client):
 
     assert result.committed
     assert set(repo.files) == {
+        README_FILE,
         MARKER_FILE,
         "ideas/ideabrd/IDEA.md",
         "ideas/ideabrd-2/IDEA.md",
@@ -430,7 +444,8 @@ async def test_the_board_lands_in_one_commit_on_a_fresh_repo(users, make_client)
     """The initial commit is GitHub's; the board is a single commit on top."""
     from app.db import SessionLocal
 
-    repo = FakeRepo({"README.md": b"# ideabrd-board\n"})
+    # Exactly the stub GitHub leaves for a repo of this name.
+    repo = FakeRepo({"README.md": b"# board\n"})
     repo.install(respx.mock)
     async with SessionLocal() as s:
         user = await _board(s, users["a"], ["IdeaBRD", "Second"])
@@ -439,8 +454,84 @@ async def test_the_board_lands_in_one_commit_on_a_fresh_repo(users, make_client)
     assert result.committed and repo.commits == 1
     assert repo.files[MARKER_FILE] == marker_content()
     assert set(repo.files) == {
-        "README.md",
+        README_FILE,
         MARKER_FILE,
         "ideas/ideabrd/IDEA.md",
         "ideas/second/IDEA.md",
     }
+    # GitHub's stub is replaced by something that explains the repo.
+    assert repo.files[README_FILE].startswith(b"# ")
+    assert b"ideas/<slug>" in repo.files[README_FILE]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_the_readme_names_whose_board_it_is(users, make_client):
+    from app.db import SessionLocal
+    from app.models import Identity
+
+    repo = FakeRepo({"README.md": b"# board\n"})
+    repo.install(respx.mock)
+    async with SessionLocal() as s:
+        s.add(
+            Identity(
+                user_id=users["a"],
+                provider="github",
+                subject="gh-a",
+                github_login="octocat",
+                github_token="gho_x",
+            )
+        )
+        user = await _board(s, users["a"], ["IdeaBRD"])
+        await publish_board(s, user, opt_in=True)
+
+    readme = repo.files[README_FILE].decode()
+    assert readme.startswith("# octocat's idea board")
+    assert README_SENTINEL in readme
+    # It has to explain the layout to someone who only has the repo.
+    for rule in ("ideas/<slug>", "rank", "overwritten on the next publish"):
+        assert rule in readme
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_a_readme_somebody_wrote_is_never_touched(users, make_client):
+    """The worst thing this publisher could do to a repo is overwrite the README
+    of a project that was already there."""
+    from app.db import SessionLocal
+
+    theirs = b"# My Actual Project\n\nNothing to do with any board.\n"
+    repo = FakeRepo({"README.md": theirs, "src/main.py": b"print()\n"})
+    repo.install(respx.mock)
+    async with SessionLocal() as s:
+        user = await _board(s, users["a"], ["IdeaBRD"])
+        result = await publish_board(s, user, opt_in=True)
+
+    assert result.committed
+    assert repo.files["README.md"] == theirs
+    assert README_FILE not in result.written
+    assert README_FILE not in result.removed
+    assert "ideas/ideabrd/IDEA.md" in repo.files
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_our_own_readme_is_updated_in_place(users, make_client):
+    """Carrying the sentinel is what makes it ours to rewrite later."""
+    from app.db import SessionLocal
+    from app.models import User
+
+    stale = f"# Old title\n\n{README_SENTINEL}\n\nout of date\n".encode()
+    repo = FakeRepo({"README.md": stale})
+    repo.install(respx.mock)
+    async with SessionLocal() as s:
+        user = await _board(s, users["a"], ["IdeaBRD"])
+        result = await publish_board(s, user, opt_in=True)
+
+    assert README_FILE in result.written
+    assert repo.files[README_FILE] == render_readme(None, REPO)
+
+    # ...and a second publish leaves it alone, since it now matches.
+    async with SessionLocal() as s:
+        again = await publish_board(s, await s.get(User, users["a"]))
+    assert README_FILE not in again.written

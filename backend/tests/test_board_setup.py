@@ -127,6 +127,8 @@ async def test_init_creates_an_empty_repo_and_publishes_into_it(users, make_clie
         "ideas/ideabrd/IDEA.md",
         "ideas/second/IDEA.md",
     }
+    # The stub GitHub left is replaced by one naming whose board this is.
+    assert repo.files["README.md"].startswith(b"# octocat's idea board")
     # Initialised on creation, because a repo with no commits rejects every git
     # data write and could never have a first tree built in it.
     assert json.loads(created.calls[0].request.read())["auto_init"] is True

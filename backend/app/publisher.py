@@ -42,8 +42,12 @@ from app.boardrepo import (
     FORMAT_VERSION,
     IDEAS_DIR,
     MARKER_FILE,
+    README_FILE,
+    README_SENTINEL,
+    github_stub_readmes,
     idea_file_path,
     logo_path,
+    render_readme,
     unique_slug,
 )
 from app.github import (
@@ -52,6 +56,7 @@ from app.github import (
     create_blob,
     create_commit,
     create_tree,
+    get_blob,
     get_ref,
     get_tree,
     update_ref,
@@ -101,15 +106,25 @@ def blob_sha(data: bytes) -> str:
     return hashlib.sha1(header + data).hexdigest()
 
 
-async def board_token(session: AsyncSession, user: User) -> str | None:
-    """The user's own GitHub token — a board repo is published as its owner."""
-    return await session.scalar(
-        select(Identity.github_token).where(
-            Identity.user_id == user.id,
-            Identity.provider == "github",
-            Identity.github_token.is_not(None),
+async def board_identity(
+    session: AsyncSession, user: User
+) -> tuple[str | None, str | None]:
+    """The user's GitHub token and login — a board repo is published as its owner."""
+    row = (
+        await session.execute(
+            select(Identity.github_token, Identity.github_login).where(
+                Identity.user_id == user.id,
+                Identity.provider == "github",
+                Identity.github_token.is_not(None),
+            )
         )
-    )
+    ).first()
+    return (row[0], row[1]) if row else (None, None)
+
+
+async def board_token(session: AsyncSession, user: User) -> str | None:
+    token, _login = await board_identity(session, user)
+    return token
 
 
 async def load_board(session: AsyncSession, user: User) -> list[BoardTile]:
@@ -207,6 +222,31 @@ def marker_content() -> bytes:
     ).encode()
 
 
+async def readme_is_ours(
+    repo: str,
+    current: dict[str, str],
+    desired: bytes,
+    *,
+    token: str | None = None,
+    client=None,
+) -> bool:
+    """Whether the repo's README may be rewritten.
+
+    Ours to write when there is none, when it already is the one we would
+    write, when it carries our sentinel, or when it is still the stub GitHub
+    left behind on creation. Anything else is someone's own README and is left
+    exactly where it is — clobbering it would be the worst thing this publisher
+    could do to a repo.
+    """
+    sha = current.get(README_FILE)
+    if sha is None or sha == blob_sha(desired):
+        return True
+    existing = await get_blob(repo, sha, token=token, client=client)
+    if existing in github_stub_readmes(repo):
+        return True
+    return README_SENTINEL.encode() in existing
+
+
 async def build_tree(
     session: AsyncSession, tiles: list[BoardTile]
 ) -> dict[str, bytes]:
@@ -258,7 +298,7 @@ async def publish_board(
     """
     if not user.board_repo:
         return PublishResult(error="No board repo configured")
-    token = await board_token(session, user)
+    token, login = await board_identity(session, user)
     repo = user.board_repo
     branch = user.board_branch or DEFAULT_BRANCH
 
@@ -284,6 +324,11 @@ async def publish_board(
 
         tiles = assign_identity(await load_board(session, user))
         desired = await build_tree(session, tiles)
+        readme = render_readme(login, repo)
+        if await readme_is_ours(
+            repo, current, readme, token=token, client=client
+        ):
+            desired[README_FILE] = readme
         writes, removals = diff(desired, current)
 
         # Identity is persisted whether or not anything is committed: a slug
