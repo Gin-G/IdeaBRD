@@ -691,3 +691,28 @@ async def test_linking_a_repo_clears_the_copy_the_board_was_holding(users, make_
     assert "ideas/tiskit/idea_logo.png" in result.removed
     assert "ideas/tiskit/idea_logo.png" not in repo.files
     assert b"held here" not in repo.files["ideas/tiskit/IDEA.md"]
+
+
+def test_github_stub_readme_is_recognised_verbatim():
+    """The exact bytes GitHub wrote for a repo created by this app, copied off
+    the real thing. An assumed format here silently costs the board its README:
+    the guard sees a stranger's file and correctly refuses to touch it."""
+    from app.boardrepo import github_stub_readmes
+
+    real = b"# ideabrd-board\nIdeaBRD board\n"
+    assert real in github_stub_readmes("Gin-G/ideabrd-board")
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_the_stub_is_replaced_by_the_boards_own_readme(users, make_client):
+    from app.db import SessionLocal
+
+    repo = FakeRepo({"README.md": b"# board\nIdeaBRD board\n"})
+    repo.install(respx.mock)
+    async with SessionLocal() as s:
+        user = await _board(s, users["a"], ["IdeaBRD"])
+        result = await publish_board(s, user, opt_in=True)
+
+    assert README_FILE in result.written
+    assert README_SENTINEL.encode() in repo.files[README_FILE]

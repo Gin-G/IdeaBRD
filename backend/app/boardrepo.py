@@ -127,6 +127,9 @@ def github_stub_readmes(repo: str) -> set[bytes]:
     name = repo.split("/")[-1]
     return {
         f"# {name}\n".encode(),
+        # What GitHub actually writes when the repo has a description: the
+        # heading and the description on consecutive lines, no blank between.
+        f"# {name}\n{REPO_DESCRIPTION}\n".encode(),
         f"# {name}\n\n{REPO_DESCRIPTION}\n".encode(),
     }
 
