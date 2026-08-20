@@ -14,7 +14,7 @@ import respx
 
 from app.boardrepo import MARKER_FILE
 from app.ideafile import parse_idea_file
-from app.publisher import blob_sha, diff, publish_board
+from app.publisher import blob_sha, diff, marker_content, publish_board
 from app.rank import initial
 from tests.conftest import client_as  # noqa: F401  (fixture helper)
 
@@ -28,36 +28,50 @@ def _tree_url(sha: str) -> str:
 
 
 class FakeRepo:
-    """A board repo that remembers what was committed to it."""
+    """A board repo that remembers what was committed to it.
 
-    def __init__(self, files: dict[str, bytes] | None = None):
+    Refuses git data writes while it has no commits, exactly as GitHub does
+    ("Git Repository is empty"). That rule is the whole reason the publisher
+    seeds through the contents API, so a fake without it would pass while the
+    real thing failed.
+    """
+
+    def __init__(self, files: dict[str, bytes] | None = None, repo: str = REPO):
+        self.repo = repo
         self.files = dict(files or {})
         self.head = "commit-0" if files else None
         self.commits = 0
+        self.seeds = 0
         self.blobs: dict[str, bytes] = {}
 
     def tree(self) -> dict[str, str]:
         return {path: blob_sha(data) for path, data in self.files.items()}
 
+    @property
+    def empty(self) -> bool:
+        return self.head is None
+
     def install(self, mock) -> None:
-        mock.get(REF).mock(side_effect=self._ref)
-        mock.get(url__regex=rf"{BASE}/repos/{REPO}/git/trees/.*").mock(
-            side_effect=self._get_tree
-        )
-        mock.post(f"{BASE}/repos/{REPO}/git/blobs").mock(side_effect=self._blob)
-        mock.post(f"{BASE}/repos/{REPO}/git/trees").mock(side_effect=self._put_tree)
-        mock.post(f"{BASE}/repos/{REPO}/git/commits").mock(side_effect=self._commit)
-        mock.patch(url__regex=rf"{BASE}/repos/{REPO}/git/refs/heads/.*").mock(
-            side_effect=self._update
-        )
-        mock.post(f"{BASE}/repos/{REPO}/git/refs").mock(side_effect=self._update)
+        base = f"{BASE}/repos/{self.repo}"
+        mock.get(url__regex=rf"{base}/git/ref/heads/.*").mock(side_effect=self._ref)
+        mock.get(url__regex=rf"{base}/git/trees/.*").mock(side_effect=self._get_tree)
+        mock.put(url__regex=rf"{base}/contents/.*").mock(side_effect=self._put_contents)
+        mock.post(f"{base}/git/blobs").mock(side_effect=self._blob)
+        mock.post(f"{base}/git/trees").mock(side_effect=self._put_tree)
+        mock.post(f"{base}/git/commits").mock(side_effect=self._commit)
+        mock.patch(url__regex=rf"{base}/git/refs/heads/.*").mock(side_effect=self._update)
+
+    def _empty_response(self) -> httpx.Response:
+        return httpx.Response(409, json={"message": "Git Repository is empty."})
 
     def _ref(self, request):
         if self.head is None:
-            return httpx.Response(404, json={})
+            return httpx.Response(409, json={"message": "Git Repository is empty."})
         return httpx.Response(200, json={"object": {"sha": self.head}})
 
     def _get_tree(self, request):
+        if self.empty:
+            return self._empty_response()
         return httpx.Response(
             200,
             json={
@@ -69,13 +83,26 @@ class FakeRepo:
             },
         )
 
+    def _put_contents(self, request):
+        """The one write a repo with no commits accepts."""
+        path = str(request.url).split("/contents/", 1)[1]
+        data = base64.b64decode(json.loads(request.read())["content"])
+        self.files[path] = data
+        self.seeds += 1
+        self.head = f"seed-{self.seeds}"
+        return httpx.Response(201, json={"content": {"sha": blob_sha(data)}})
+
     def _blob(self, request):
+        if self.empty:
+            return self._empty_response()
         data = base64.b64decode(json.loads(request.read())["content"])
         sha = blob_sha(data)
         self.blobs[sha] = data
         return httpx.Response(201, json={"sha": sha})
 
     def _put_tree(self, request):
+        if self.empty:
+            return self._empty_response()
         body = json.loads(request.read())
         if not body.get("base_tree"):
             self.files = {}
@@ -87,6 +114,8 @@ class FakeRepo:
         return httpx.Response(201, json={"sha": "tree-new"})
 
     def _commit(self, request):
+        if self.empty:
+            return self._empty_response()
         self.commits += 1
         return httpx.Response(201, json={"sha": f"commit-{self.commits}"})
 
@@ -375,3 +404,41 @@ async def test_board_order_survives_a_round_trip(users, make_client):
         )
     )
     assert [title for _rank, title in by_rank] == titles
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_an_empty_repo_is_seeded_before_the_board_lands(users, make_client):
+    """A repo with no commits rejects every git data write — blobs included —
+    so there is no first tree to build. The marker goes up through the contents
+    API first, and the board publishes on top of it."""
+    from app.db import SessionLocal
+
+    repo = FakeRepo()
+    assert repo.empty, "a freshly created repo has no commits"
+    repo.install(respx.mock)
+    async with SessionLocal() as s:
+        user = await _board(s, users["a"], ["IdeaBRD"])
+        result = await publish_board(s, user)
+
+    assert result.committed and result.error is None
+    assert repo.seeds == 1, "the first commit has to come from the contents API"
+    assert repo.commits == 1, "everything else is still one tree commit"
+    assert repo.files[MARKER_FILE] == marker_content()
+    assert "ideas/ideabrd/IDEA.md" in repo.files
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_a_seeded_board_does_not_reseed(users, make_client):
+    from app.db import SessionLocal
+    from app.models import User
+
+    repo = FakeRepo()
+    repo.install(respx.mock)
+    async with SessionLocal() as s:
+        await publish_board(s, await _board(s, users["a"], ["IdeaBRD"]))
+    async with SessionLocal() as s:
+        await publish_board(s, await s.get(User, users["a"]))
+
+    assert repo.seeds == 1

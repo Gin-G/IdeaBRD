@@ -430,6 +430,17 @@ def clear_cache() -> None:
 FILE_MODE = "100644"
 
 
+def _error_detail(resp: httpx.Response) -> str:
+    """GitHub's own explanation for a rejected write, if it gave one."""
+    try:
+        body = resp.json()
+    except ValueError:
+        return ""
+    parts = [body.get("message", "")]
+    parts += [e.get("message", "") for e in body.get("errors", ()) if isinstance(e, dict)]
+    return "; ".join(p for p in parts if p)
+
+
 async def get_tree(
     repo: str,
     ref: str,
@@ -526,7 +537,14 @@ async def _post(
         if resp.status_code == 404:
             raise GitHubError("Repository not found or no write access", status_code=404)
         if resp.status_code in (409, 422):
-            raise GitHubError("Board changed on GitHub since last publish", status_code=409)
+            # 409 and 422 cover everything from a moved ref to a repo with no
+            # commits, so GitHub's own wording goes through rather than a guess
+            # at which one it was — a wrong guess sends people hunting a
+            # conflict that never happened.
+            raise GitHubError(
+                _error_detail(resp) or "Board changed on GitHub since last publish",
+                status_code=409,
+            )
         resp.raise_for_status()
         return resp.json()
     except httpx.HTTPError as exc:
@@ -695,8 +713,9 @@ async def create_repo(
 
     Created without a README on purpose: an auto-initialised repo arrives with a
     commit the board didn't make, which the publisher would then treat as
-    somebody else's content and refuse to write into. Left empty, the board's
-    own first publish is the repo's first commit.
+    somebody else's content and refuse to write into. The publisher seeds the
+    first commit itself instead, since a repo with no commits rejects every git
+    data write.
     """
     path = f"/orgs/{org}/repos" if org else "/user/repos"
     body: dict = {"name": name, "private": private, "auto_init": False}

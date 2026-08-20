@@ -140,18 +140,9 @@ async def test_init_under_an_org_targets_the_org_endpoint(users, make_client):
             201, json={"full_name": "acme/board", "default_branch": "trunk"}
         )
     )
-    repo = FakeRepo()
-    repo.install(respx.mock)
     # The publisher talks to the org repo, on its own default branch.
-    respx.get(f"{BASE}/repos/acme/board/git/ref/heads/trunk").mock(
-        return_value=httpx.Response(404, json={})
-    )
-    for verb, path in (
-        ("post", "blobs"), ("post", "trees"), ("post", "commits"), ("post", "refs")
-    ):
-        getattr(respx, verb)(f"{BASE}/repos/acme/board/git/{path}").mock(
-            return_value=httpx.Response(201, json={"sha": "x"})
-        )
+    repo = FakeRepo(repo="acme/board")
+    repo.install(respx.mock)
 
     async with make_client(users["a"]) as c:
         resp = await c.post(
@@ -162,6 +153,7 @@ async def test_init_under_an_org_targets_the_org_endpoint(users, make_client):
     assert org_create.called
     assert resp.json()["board"]["board_repo"] == "acme/board"
     assert resp.json()["board"]["board_branch"] == "trunk"
+    assert "ideas/ideabrd/IDEA.md" not in repo.files, "no ideas on this board yet"
 
 
 @pytest.mark.asyncio

@@ -96,3 +96,4 @@ dual-written and kept authoritative until the repo has proven itself.
 - [ ] Say in a board repo's copy of a linked idea that it is a cache and the linked repo wins, the same way every IDEA.md already carries its own format rules
 - [ ] Show open pull requests on a repo-linked tile, now that a PR is where an idea's collaboration actually happens
 - [x] Create a board repo from the app on first run — pick the account or org, get an empty repo, and publish the existing board into it as that repo's first commit
+- [ ] Check the GitHub client against a real repo, not just respx — the publisher's tests all passed while GitHub refused every git data write to a repo with no commits
