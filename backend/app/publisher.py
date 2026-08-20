@@ -61,7 +61,7 @@ from app.github import (
     get_tree,
     update_ref,
 )
-from app.ideafile import ParsedTodo, render_idea_file
+from app.ideafile import ParsedTodo, render_idea_file, render_reference_file
 from app.logos import logo_path_for
 from app.models import Idea, IdeaCollaborator, IdeaLogo, Identity, User
 from app.rank import repair
@@ -192,8 +192,19 @@ def assign_identity(tiles: list[BoardTile]) -> list[BoardTile]:
 
 
 def render_tile(tile: BoardTile) -> str:
-    """The IDEA.md for one tile, carrying the board-level keys a board copy owns."""
+    """The IDEA.md for one tile.
+
+    An idea that has a repository of its own is written as a reference to it,
+    not a copy of it: the notes, progress and to-dos are already tracked there,
+    under their own history, and a second copy here could only ever drift from
+    them. An idea with no repo has nowhere else to live, so the board holds it
+    in full — that is the whole difference between the two.
+    """
     idea = tile.idea
+    if idea.github_repo:
+        return render_reference_file(
+            repo=idea.github_repo, rank=tile.rank or "", color=idea.color
+        )
     todos = sorted(idea.todos, key=lambda t: (t.position, t.id))
     return render_idea_file(
         title=idea.title,
@@ -255,6 +266,11 @@ async def build_tree(
     for tile in tiles:
         assert tile.slug  # assign_identity ran first
         files[idea_file_path(tile.slug)] = render_tile(tile).encode()
+        if tile.idea.github_repo:
+            # The tile image is already committed beside that repo's own
+            # IDEA.md (see app.gitsync), so copying it here would duplicate a
+            # file git is tracking three feet away.
+            continue
         logo = await session.get(IdeaLogo, tile.idea.id)
         if logo is not None:
             name = logo_path_for(logo.content_type)
@@ -289,9 +305,15 @@ async def publish_board(
     user: User,
     *,
     opt_in: bool = False,
+    dry_run: bool = False,
     client=None,
 ) -> PublishResult:
     """Write the user's board to their board repo as one commit.
+
+    With ``dry_run`` nothing is written and no identity is assigned; the result
+    just names what a publish would change. That is what lets the app say
+    whether the repo is behind, instead of offering a button that gives no hint
+    whether pressing it does anything.
 
     Best-effort in the same spirit as app.gitsync: a GitHub failure comes back
     as a message rather than an exception, since the board itself is fine.
@@ -330,6 +352,11 @@ async def publish_board(
         ):
             desired[README_FILE] = readme
         writes, removals = diff(desired, current)
+
+        if dry_run:
+            return PublishResult(
+                committed=False, written=sorted(writes), removed=removals
+            )
 
         # Identity is persisted whether or not anything is committed: a slug
         # assigned here has to be the same slug next time, or the next publish

@@ -535,3 +535,159 @@ async def test_our_own_readme_is_updated_in_place(users, make_client):
     async with SessionLocal() as s:
         again = await publish_board(s, await s.get(User, users["a"]))
     assert README_FILE not in again.written
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_a_dry_run_reports_drift_without_causing_any(users, make_client):
+    """What the app needs to say whether the repo is behind: the diff, and no
+    commit, no ref moved, and no slug or rank assigned as a side effect."""
+    from app.db import SessionLocal
+    from app.models import Idea, User
+
+    repo = FakeRepo()
+    repo.install(respx.mock)
+    async with SessionLocal() as s:
+        user = await _board(s, users["a"], ["IdeaBRD"])
+        await publish_board(s, user)
+
+    # Settled board: nothing pending.
+    async with SessionLocal() as s:
+        clean = await publish_board(s, await s.get(User, users["a"]), dry_run=True)
+    assert clean.written == [] and clean.removed == []
+    assert clean.committed is False
+
+    # Add an idea; the dry run names it but must not publish or name it a slug.
+    async with SessionLocal() as s:
+        s.add(Idea(user_id=users["a"], title="Brand New", notes="", position=9))
+        await s.commit()
+        pending = await publish_board(s, await s.get(User, users["a"]), dry_run=True)
+
+    assert pending.written == ["ideas/brand-new/IDEA.md"]
+    assert pending.committed is False
+    assert repo.commits == 1, "a dry run must not commit"
+    assert "ideas/brand-new/IDEA.md" not in repo.files
+
+    async with SessionLocal() as s:
+        import sqlalchemy as sa
+
+        idea = (
+            await s.execute(sa.select(Idea).where(Idea.title == "Brand New"))
+        ).scalar_one()
+        assert idea.slug is None, "a dry run must not assign identity"
+        assert idea.rank is None
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_a_linked_idea_is_referenced_not_copied(users, make_client):
+    """The idea already has a repo tracking its notes and to-dos under its own
+    history. A second copy here could only ever drift from it."""
+    from app.db import SessionLocal
+    from app.models import Idea, IdeaLogo
+
+    repo = FakeRepo()
+    repo.install(respx.mock)
+    async with SessionLocal() as s:
+        user = await _board(s, users["a"], [])
+        linked = Idea(
+            user_id=users["a"],
+            title="Tiskit",
+            notes="notes that live in the linked repo",
+            status="active",
+            progress=40,
+            github_repo="Gin-G/tiskit",
+            position=0,
+        )
+        s.add(linked)
+        await s.commit()
+        s.add(IdeaLogo(idea_id=linked.id, content_type="image/png", data=b"PNGDATA"))
+        await s.commit()
+        await publish_board(s, user)
+
+    body = repo.files["ideas/tiskit/IDEA.md"].decode()
+    parsed = parse_idea_file(body)
+    # The pointer and the board's own keys, and nothing that belongs to the repo.
+    assert parsed.repo == "Gin-G/tiskit"
+    assert parsed.rank is not None and parsed.color is not None
+    assert parsed.status is None and parsed.progress is None
+    assert parsed.todos == []
+    assert "notes that live in the linked repo" not in body
+    assert "https://github.com/Gin-G/tiskit" in body
+    # Its tile image is committed beside that repo's own IDEA.md already.
+    assert not [p for p in repo.files if p.startswith("ideas/tiskit/idea_logo")]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_an_idea_with_no_repo_is_held_here_in_full(users, make_client):
+    """This board is the only place it exists, so it has to carry everything."""
+    from app.db import SessionLocal
+    from app.models import Idea, IdeaLogo, Todo
+
+    repo = FakeRepo()
+    repo.install(respx.mock)
+    async with SessionLocal() as s:
+        user = await _board(s, users["a"], [])
+        idea = Idea(
+            user_id=users["a"],
+            title="Just A Note",
+            notes="only lives on the board",
+            status="active",
+            progress=30,
+            position=0,
+        )
+        s.add(idea)
+        await s.commit()
+        s.add_all(
+            [
+                Todo(idea_id=idea.id, text="do the thing", done=False, position=0),
+                IdeaLogo(idea_id=idea.id, content_type="image/png", data=b"PNGDATA"),
+            ]
+        )
+        await s.commit()
+        await publish_board(s, user)
+
+    parsed = parse_idea_file(repo.files["ideas/just-a-note/IDEA.md"].decode())
+    assert parsed.title == "Just A Note"
+    assert parsed.notes == "only lives on the board"
+    assert (parsed.status, parsed.progress) == ("active", 30)
+    assert parsed.todos == [("do the thing", False, None)]
+    assert repo.files["ideas/just-a-note/idea_logo.png"] == b"PNGDATA"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_linking_a_repo_clears_the_copy_the_board_was_holding(users, make_client):
+    """The migration for a board published before this rule: the duplicated
+    notes and logo have to leave, not linger as a stale second copy."""
+    from app.db import SessionLocal
+    from app.models import Idea, IdeaLogo, User
+
+    repo = FakeRepo()
+    repo.install(respx.mock)
+    async with SessionLocal() as s:
+        user = await _board(s, users["a"], [])
+        idea = Idea(
+            user_id=users["a"], title="Tiskit", notes="held here", position=0
+        )
+        s.add(idea)
+        await s.commit()
+        s.add(IdeaLogo(idea_id=idea.id, content_type="image/png", data=b"PNGDATA"))
+        await s.commit()
+        await publish_board(s, user)
+
+    assert repo.files["ideas/tiskit/idea_logo.png"] == b"PNGDATA"
+    assert b"held here" in repo.files["ideas/tiskit/IDEA.md"]
+
+    async with SessionLocal() as s:
+        import sqlalchemy as sa
+
+        idea = (await s.execute(sa.select(Idea))).scalar_one()
+        idea.github_repo = "Gin-G/tiskit"
+        await s.commit()
+        result = await publish_board(s, await s.get(User, users["a"]))
+
+    assert "ideas/tiskit/idea_logo.png" in result.removed
+    assert "ideas/tiskit/idea_logo.png" not in repo.files
+    assert b"held here" not in repo.files["ideas/tiskit/IDEA.md"]

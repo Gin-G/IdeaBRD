@@ -124,6 +124,8 @@ export const api = {
 		}),
 	setBoardRepo: (repo: string | null) =>
 		request<Board>('/api/board', { method: 'PUT', body: JSON.stringify({ board_repo: repo }) }),
+	/** What a publish would change, without changing anything. */
+	boardStatus: () => request<PublishResult>('/api/board/status'),
 	/** Write the board to its repo. optIn accepts a repo that holds other files. */
 	publishBoard: (optIn = false) =>
 		request<PublishResult>(`/api/board/publish?opt_in=${optIn}`, { method: 'POST' }),

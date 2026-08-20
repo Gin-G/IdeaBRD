@@ -12,6 +12,9 @@
 	let busy = $state(false);
 	let error = $state('');
 	let result = $state<PublishResult | null>(null);
+	// What a publish would change right now. Null while unknown.
+	let pending = $state<PublishResult | null>(null);
+	let checking = $state(false);
 
 	// Creation form. The board is private by default: it is someone's notes.
 	let name = $state('ideabrd-board');
@@ -27,6 +30,9 @@
 		error = '';
 		try {
 			board = await api.board();
+			if (board.board_repo) {
+				checkPending();
+			}
 			if (!board.board_repo) {
 				const found = await api.boardOwners();
 				owners = found.owners;
@@ -38,6 +44,18 @@
 			error = e instanceof ApiError ? e.message : 'Could not load board settings';
 		} finally {
 			loading = false;
+		}
+	}
+
+	/** Ask the repo what is out of date. Never fatal: it is a nicety, not the board. */
+	async function checkPending() {
+		checking = true;
+		try {
+			pending = await api.boardStatus();
+		} catch {
+			pending = null;
+		} finally {
+			checking = false;
 		}
 	}
 
@@ -60,6 +78,7 @@
 			board = done.board;
 			result = done.publish;
 			oninit?.();
+			await checkPending();
 		}
 	}
 
@@ -68,6 +87,7 @@
 		if (linked) {
 			board = linked;
 			result = null;
+			await checkPending();
 		}
 	}
 
@@ -76,6 +96,7 @@
 		if (done) {
 			result = done;
 			if (done.committed) board = await api.board();
+			await checkPending();
 		}
 	}
 
@@ -84,12 +105,18 @@
 		if (cleared) {
 			board = cleared;
 			result = null;
+			pending = null;
 			await load();
 		}
 	}
 
 	const needsGithub = $derived(error.includes('GitHub account'));
 	const changed = $derived((result?.written.length ?? 0) + (result?.removed.length ?? 0));
+	const outstanding = $derived((pending?.written.length ?? 0) + (pending?.removed.length ?? 0));
+	// Publishing is manual while the database is the source of truth, so the
+	// board drifts from the repo as soon as it is edited. Say so, rather than
+	// offering a button with no hint whether pressing it does anything.
+	const upToDate = $derived(pending !== null && outstanding === 0);
 </script>
 
 <div
@@ -139,9 +166,47 @@
 				</div>
 			</div>
 
-			<button class="btn-primary w-full" onclick={() => publish()} disabled={busy}>
-				{busy ? 'Publishing…' : 'Publish board'}
+			<div class="mb-3 flex items-center justify-between gap-3 text-sm">
+				<span class="text-slate-400">
+					{#if checking}
+						Checking the repo…
+					{:else if upToDate}
+						Up to date with the board
+					{:else if pending}
+						{outstanding}
+						{outstanding === 1 ? 'file' : 'files'} out of date
+					{:else}
+						Couldn't reach the repo
+					{/if}
+				</span>
+				<button
+					class="text-xs text-slate-500 hover:text-slate-300"
+					onclick={checkPending}
+					disabled={checking || busy}>Re-check</button
+				>
+			</div>
+
+			<button
+				class="btn-primary w-full"
+				onclick={() => publish()}
+				disabled={busy || checking || upToDate}
+			>
+				{#if busy}
+					Publishing…
+				{:else if upToDate}
+					Nothing to publish
+				{:else if pending}
+					Publish {outstanding}
+					{outstanding === 1 ? 'change' : 'changes'}
+				{:else}
+					Publish board
+				{/if}
 			</button>
+
+			<p class="mt-2 text-xs text-slate-500">
+				Publishing is manual for now — the board is edited in the app and copied here
+				when you ask.
+			</p>
 
 			{#if result?.needs_opt_in}
 				<div class="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm">

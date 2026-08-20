@@ -172,9 +172,11 @@ def render_idea_file(
         f"progress: {progress}",
     ]
     if color is not None:
-        lines.append(f"color: {color}")
+        # Quoted because "#..." opens a comment in YAML, and a board file that
+        # only our own lenient parser can read is a trap for anything else.
+        lines.append(f'color: "{color}"')
     if rank is not None:
-        lines.append(f"rank: {rank}")
+        lines.append(f'rank: "{rank}"')
     if repo is not None:
         lines.append(f"repo: {repo}")
     lines += [
@@ -197,6 +199,36 @@ def render_idea_file(
     if items:
         lines.append("")
     return "\n".join(lines)
+
+
+def render_reference_file(*, repo: str, rank: str, color: str) -> str:
+    """A board entry for an idea whose content lives in its own repository.
+
+    The board records that the idea is on it and where it sits; the repo named
+    here holds the idea. Copying the notes and to-dos in as well would put the
+    same text in two places under two histories, which is the drift this layout
+    exists to avoid — so the body is a pointer, derived entirely from ``repo``,
+    and there is nothing here that can fall out of date.
+    """
+    url = f"https://github.com/{repo}"
+    return "\n".join(
+        [
+            "---",
+            f'color: "{color}"',
+            f'rank: "{rank}"',
+            f"repo: {repo}",
+            "---",
+            "",
+            f"# {repo}",
+            "",
+            f"This idea lives in [{repo}]({url}).",
+            "",
+            "This board records which ideas are on it and where each one lives.",
+            f"The idea itself — its notes, progress and to-dos — is in that",
+            "repository's own IDEA.md, which is the copy that counts.",
+            "",
+        ]
+    )
 
 
 def _parse_frontmatter(lines: list[str]) -> tuple[dict[str, str], int]:

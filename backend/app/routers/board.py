@@ -141,3 +141,22 @@ async def init_board(
     return BoardInitOut(
         board=BoardOut.model_validate(user), publish=PublishOut(**vars(result))
     )
+
+
+@router.get("/status", response_model=PublishOut)
+async def board_status(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """What a publish would change right now, without changing anything.
+
+    ``committed`` is always false here; empty ``written`` and ``removed`` mean
+    the repo already matches the board.
+    """
+    if not user.board_repo:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No board repo configured",
+        )
+    result = await publish_board(session, user, dry_run=True)
+    return PublishOut(**vars(result))

@@ -93,7 +93,7 @@ dual-written and kept authoritative until the repo has proven itself.
 - [ ] Refuse to publish over a board repo that moved since last time — `board_commit_sha` is recorded on every publish and read by nothing, so a direct edit to the repo is silently overwritten
 - [ ] Let collaboration be git's: two people who both link an idea's repo collaborate there by branch and PR, so IdeaCollaborator, IdeaInvitation and roles retire at cutover in favour of repo permissions
 - [ ] Promote a note-only idea to its own repo — an idea kept inside a board repo has nowhere for anyone else to link, so giving it a repo is what sharing now means
-- [ ] Say in a board repo's copy of a linked idea that it is a cache and the linked repo wins, the same way every IDEA.md already carries its own format rules
+- [x] Stop the board repo copying a linked idea at all — it records a reference and the board keys, so there is no second copy of the notes, to-dos or logo to explain, and none that can drift
 - [ ] Show open pull requests on a repo-linked tile, now that a PR is where an idea's collaboration actually happens
 - [x] Create a board repo from the app on first run — pick the account or org, get an empty repo, and publish the existing board into it as that repo's first commit
 - [ ] Check the GitHub client against a real repo, not just respx — the publisher's tests all passed while GitHub refused every git data write to a repo with no commits

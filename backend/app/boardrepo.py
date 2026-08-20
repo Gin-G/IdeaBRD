@@ -166,7 +166,6 @@ status: active
 progress: 60
 color: "#6366f1"
 rank: "a0m"
-repo: owner/name
 ---
 
 # Title
@@ -186,9 +185,30 @@ fractional key compared as plain text, never as a number — it is what lets a
 tile move without renumbering every file below it, so reordering the board
 rewrites one file.
 
-`repo` means the idea has a repository of its own. That repository's own
-`{IDEA_FILE}` is the one that wins; the copy here is a cache of it, and it is
-where anyone collaborating on that idea should be working.
+## Ideas that live elsewhere
+
+An idea with a repository of its own is recorded here as a reference — its
+frontmatter and a link, nothing more:
+
+```markdown
+---
+color: "#6366f1"
+rank: "a0m"
+repo: owner/name
+---
+
+# owner/name
+
+This idea lives in [owner/name](https://github.com/owner/name).
+```
+
+Its notes, progress, to-dos and tile image are in that repository, tracked by
+its own history, and that is the copy that counts. Nothing is duplicated here,
+so there is nothing here that can fall out of date with it — and it is where
+anyone collaborating on that idea should be working.
+
+Ideas without a repository of their own are held in this one in full, because
+this is the only place they exist.
 
 ## Editing
 
