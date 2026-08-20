@@ -110,7 +110,8 @@ async def test_init_creates_an_empty_repo_and_publishes_into_it(users, make_clie
             201, json={"full_name": REPO, "default_branch": "main"}
         )
     )
-    repo = FakeRepo()
+    # GitHub initialises it, so the repo the publisher meets already has a commit.
+    repo = FakeRepo({"README.md": b"# board\n"})
     repo.install(respx.mock)
 
     async with make_client(users["a"]) as c:
@@ -121,13 +122,15 @@ async def test_init_creates_an_empty_repo_and_publishes_into_it(users, make_clie
     assert body["board"]["board_repo"] == REPO
     assert body["publish"]["committed"] is True
     assert set(repo.files) == {
+        "README.md",
         MARKER_FILE,
         "ideas/ideabrd/IDEA.md",
         "ideas/second/IDEA.md",
     }
-    # Created without a README: the board's first publish is the first commit,
-    # so nothing has to be reconciled against content the board didn't write.
-    assert json.loads(created.calls[0].request.read())["auto_init"] is False
+    # Initialised on creation, because a repo with no commits rejects every git
+    # data write and could never have a first tree built in it.
+    assert json.loads(created.calls[0].request.read())["auto_init"] is True
+    # Still one board commit: GitHub's initial commit, then the whole board.
     assert repo.commits == 1
 
 
@@ -141,7 +144,7 @@ async def test_init_under_an_org_targets_the_org_endpoint(users, make_client):
         )
     )
     # The publisher talks to the org repo, on its own default branch.
-    repo = FakeRepo(repo="acme/board")
+    repo = FakeRepo({"README.md": b"# board\n"}, repo="acme/board")
     repo.install(respx.mock)
 
     async with make_client(users["a"]) as c:

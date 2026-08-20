@@ -36,12 +36,20 @@ class FakeRepo:
     real thing failed.
     """
 
-    def __init__(self, files: dict[str, bytes] | None = None, repo: str = REPO):
+    def __init__(
+        self,
+        files: dict[str, bytes] | None = None,
+        repo: str = REPO,
+        *,
+        initialised: bool = True,
+    ):
         self.repo = repo
         self.files = dict(files or {})
-        self.head = "commit-0" if files else None
+        # GitHub initialises the repos this app creates, so a board normally
+        # starts from a commit it did not make. initialised=False is the repo
+        # somebody linked by hand before making one.
+        self.head = "commit-0" if initialised else None
         self.commits = 0
-        self.seeds = 0
         self.blobs: dict[str, bytes] = {}
 
     def tree(self) -> dict[str, str]:
@@ -55,7 +63,6 @@ class FakeRepo:
         base = f"{BASE}/repos/{self.repo}"
         mock.get(url__regex=rf"{base}/git/ref/heads/.*").mock(side_effect=self._ref)
         mock.get(url__regex=rf"{base}/git/trees/.*").mock(side_effect=self._get_tree)
-        mock.put(url__regex=rf"{base}/contents/.*").mock(side_effect=self._put_contents)
         mock.post(f"{base}/git/blobs").mock(side_effect=self._blob)
         mock.post(f"{base}/git/trees").mock(side_effect=self._put_tree)
         mock.post(f"{base}/git/commits").mock(side_effect=self._commit)
@@ -82,15 +89,6 @@ class FakeRepo:
                 ],
             },
         )
-
-    def _put_contents(self, request):
-        """The one write a repo with no commits accepts."""
-        path = str(request.url).split("/contents/", 1)[1]
-        data = base64.b64decode(json.loads(request.read())["content"])
-        self.files[path] = data
-        self.seeds += 1
-        self.head = f"seed-{self.seeds}"
-        return httpx.Response(201, json={"content": {"sha": blob_sha(data)}})
 
     def _blob(self, request):
         if self.empty:
@@ -408,37 +406,41 @@ async def test_board_order_survives_a_round_trip(users, make_client):
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_an_empty_repo_is_seeded_before_the_board_lands(users, make_client):
-    """A repo with no commits rejects every git data write — blobs included —
-    so there is no first tree to build. The marker goes up through the contents
-    API first, and the board publishes on top of it."""
+async def test_a_repo_with_no_commits_is_refused_in_plain_words(users, make_client):
+    """GitHub rejects every git data write to a repo with no commits — blobs
+    included — so there is no first tree to build. Repos the app creates are
+    initialised by GitHub; one linked by hand before its first commit lands
+    here, and must say so rather than blaming a conflict."""
     from app.db import SessionLocal
 
-    repo = FakeRepo()
-    assert repo.empty, "a freshly created repo has no commits"
+    repo = FakeRepo(initialised=False)
     repo.install(respx.mock)
     async with SessionLocal() as s:
         user = await _board(s, users["a"], ["IdeaBRD"])
         result = await publish_board(s, user)
 
-    assert result.committed and result.error is None
-    assert repo.seeds == 1, "the first commit has to come from the contents API"
-    assert repo.commits == 1, "everything else is still one tree commit"
-    assert repo.files[MARKER_FILE] == marker_content()
-    assert "ideas/ideabrd/IDEA.md" in repo.files
+    assert result.committed is False
+    assert "no commits" in result.error
+    assert repo.commits == 0
 
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_a_seeded_board_does_not_reseed(users, make_client):
+async def test_the_board_lands_in_one_commit_on_a_fresh_repo(users, make_client):
+    """The initial commit is GitHub's; the board is a single commit on top."""
     from app.db import SessionLocal
-    from app.models import User
 
-    repo = FakeRepo()
+    repo = FakeRepo({"README.md": b"# ideabrd-board\n"})
     repo.install(respx.mock)
     async with SessionLocal() as s:
-        await publish_board(s, await _board(s, users["a"], ["IdeaBRD"]))
-    async with SessionLocal() as s:
-        await publish_board(s, await s.get(User, users["a"]))
+        user = await _board(s, users["a"], ["IdeaBRD", "Second"])
+        result = await publish_board(s, user, opt_in=True)
 
-    assert repo.seeds == 1
+    assert result.committed and repo.commits == 1
+    assert repo.files[MARKER_FILE] == marker_content()
+    assert set(repo.files) == {
+        "README.md",
+        MARKER_FILE,
+        "ideas/ideabrd/IDEA.md",
+        "ideas/second/IDEA.md",
+    }

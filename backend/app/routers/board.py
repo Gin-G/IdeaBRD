@@ -116,8 +116,8 @@ async def init_board(
 ):
     """Create a fresh repo for this board and publish into it.
 
-    The repo is made empty, so the first publish is its first commit and the
-    board never has to be reconciled against a README it didn't write.
+    Publishing opts in without asking: the gate exists to stop the app writing
+    into a repo somebody already had, and this one did not exist a moment ago.
     """
     token = await _require_token(session, user)
     try:
@@ -137,7 +137,7 @@ async def init_board(
     user.board_published_at = None
     await session.commit()
 
-    result = await publish_board(session, user)
+    result = await publish_board(session, user, opt_in=True)
     return BoardInitOut(
         board=BoardOut.model_validate(user), publish=PublishOut(**vars(result))
     )

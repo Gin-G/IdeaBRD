@@ -617,24 +617,14 @@ async def update_ref(
     branch: str,
     sha: str,
     *,
-    create: bool = False,
     token: str | None = None,
     client: httpx.AsyncClient | None = None,
 ) -> None:
-    """Move a branch to a commit, or create it when the repo has no commits yet.
+    """Move a branch to a commit.
 
     Never forced: a rejected fast-forward means someone else moved the branch,
     and overwriting that is precisely the data loss this is meant to avoid.
     """
-    if create:
-        await _post(
-            repo,
-            "/git/refs",
-            {"ref": f"refs/heads/{branch}", "sha": sha},
-            token=token,
-            client=client,
-        )
-        return
     await _post(
         repo,
         f"/git/refs/heads/{branch}",
@@ -711,14 +701,14 @@ async def create_repo(
 ) -> tuple[str, str]:
     """Create a repo under the user or an org. Returns (full_name, default_branch).
 
-    Created without a README on purpose: an auto-initialised repo arrives with a
-    commit the board didn't make, which the publisher would then treat as
-    somebody else's content and refuse to write into. The publisher seeds the
-    first commit itself instead, since a repo with no commits rejects every git
-    data write.
+    Initialised on creation, because GitHub rejects every git data write to a
+    repo with no commits at all — ``POST /git/blobs`` answers "Git Repository is
+    empty", so a board could never build its first tree in one. Letting GitHub
+    make the first commit is what the web UI does, and it leaves the board's own
+    first publish as a single commit on top.
     """
     path = f"/orgs/{org}/repos" if org else "/user/repos"
-    body: dict = {"name": name, "private": private, "auto_init": False}
+    body: dict = {"name": name, "private": private, "auto_init": True}
     if description:
         body["description"] = description
     owned_client = client is None

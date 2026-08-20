@@ -54,7 +54,6 @@ from app.github import (
     create_tree,
     get_ref,
     get_tree,
-    put_file,
     update_ref,
 )
 from app.ideafile import ParsedTodo, render_idea_file
@@ -64,7 +63,6 @@ from app.rank import repair
 
 DEFAULT_BRANCH = "main"
 COMMIT_MESSAGE = "Publish board (via IdeaBRD)"
-SEED_MESSAGE = "Create board (via IdeaBRD)"
 
 
 @dataclass
@@ -267,23 +265,16 @@ async def publish_board(
     try:
         head = await get_ref(repo, branch, token=token, client=client)
         if head is None:
-            # A repo with no commits at all refuses every git data write with
-            # "Git Repository is empty" — blobs included, so there is no way to
-            # build the first tree. The contents API does work on one, so the
-            # marker goes up through that and the board publishes on top of it.
-            await put_file(
-                repo,
-                MARKER_FILE,
-                marker_content(),
-                SEED_MESSAGE,
-                token=token,
-                client=client,
-            )
-            head = await get_ref(repo, branch, token=token, client=client)
-            if head is None:
-                return PublishResult(
-                    error=f"Could not find branch {branch!r} after creating the board"
+            # GitHub rejects every git data write to a repo with no commits, so
+            # there is nothing to build a first tree on. Repos the app creates
+            # are initialised by GitHub and never land here; one linked by hand
+            # before its first commit does, and is told plainly why.
+            return PublishResult(
+                error=(
+                    f"{repo} has no commits on {branch!r} yet. GitHub cannot be "
+                    "written to in that state — make a commit there first."
                 )
+            )
         current = await get_tree(repo, head, token=token, client=client)
 
         # Same gate app.gitsync puts in front of seeding a repo: a repo with
