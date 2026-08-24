@@ -7,7 +7,7 @@ ingress:
   className: traefik
   tlsSecretName: ideabrd-tls
   certClusterIssuer: letsencrypt-cloudflare
-  externalDnsTarget: "8.44.158.127"
+  externalDnsTarget: "75c20a42-2dd1-4297-8a51-3aefbcb3f004.cfargotunnel.com"
   # Attach a Traefik security-headers Middleware (HSTS, nosniff, frame-deny, etc.).
   # No CSP/no-store, so Google Fonts, avatars and custom logo URLs keep working.
   securityHeaders: true
