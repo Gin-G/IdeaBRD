@@ -37,3 +37,7 @@ android/app/release/
 # Web assets and config copied in by `npx cap copy` — build output, like frontend/build
 android/app/src/main/assets/public/
 android/app/src/main/assets/capacitor.config.json
+
+# Signing keys never belong in the repository
+*.jks
+*.keystore

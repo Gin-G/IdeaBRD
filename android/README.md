@@ -78,9 +78,41 @@ signed in and as whom, and that is all it needs.
 Builds need a GitHub OAuth app client id (public by design). Pass it at build
 time as `IDEABRD_GITHUB_CLIENT_ID`, or paste one into the app on first run.
 
+## Signing a release
+
+`./scripts/make-signing-key.sh` creates a keystore and prints the four secrets
+the release workflow wants (`ANDROID_KEYSTORE_BASE64`, `…_PASSWORD`,
+`ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`). Without them the workflow still
+produces an installable APK, signed with a key generated for that run — fine for
+trying it out, but Android refuses to install a build over one signed with a
+different key, so every update means uninstalling first.
+
+Keep the keystore. Losing it means the app can never be updated again, only
+republished under a new name.
+
+## Two kinds of repository
+
+The board repo holds every tile. But an idea that has a repository of its own is
+recorded there as a **reference** — rank, colour and a link, nothing else —
+because its notes and to-dos are tracked in that repository under its own
+history, and a second copy could only ever drift from it.
+
+So the app reads that repository too. Opening such a tile offers *Fetch this
+idea*, which clones it once; after that it reads and writes that repo's own
+`IDEA.md` and works offline like everything else. Fetching is always something
+the person asks for, never a side effect of opening a tile — an idea repo can be
+large and a phone is often on a metered connection.
+
+A to-do ending in `(#12)` is owned by that issue, exactly as on the server: its
+title and whether it is closed come from GitHub rather than from the file, and
+ticking the box here closes the issue. Between fetches the last known state is
+served from a cache kept outside the checkout, so a board still opens on a
+train.
+
 ## Syncing
 
-Every edit is a commit. `sync` is fetch, merge, push, in that order.
+Every edit is a commit. `sync` is fetch, merge, push, in that order — for the
+board repo and for every idea repo this device holds a checkout of.
 
 The merge is the part worth understanding. Git's own three-way merge on an
 IDEA.md is close to useless: both sides re-render the whole file, so any real
@@ -96,15 +128,19 @@ rest of somebody's repository would be worse than saying so.
 
 ## What is not here yet
 
-- **Logos.** The app reads the path of an `idea_logo.*` beside an idea but does
-  not display or replace it.
+- **Logos.** The app finds an `idea_logo.*` beside an idea but does not display
+  or replace it.
+- **The GitHub-side actions.** Existing issues drive the to-dos that reference
+  them, but *promoting* a to-do to an issue, *importing* a repo's issues and
+  *giving an idea a repo* all have to create something on GitHub before the
+  board can point at it, and are still server-only. Each is hidden here rather
+  than left to fail — including the repo field in the edit dialog, since
+  linking a repo that hasn't been seeded would turn a held idea into a pointer
+  to an empty one.
 - **Collaboration.** Collaborators, invitations and roles are server features
   that assume an account system. On a git-only board, sharing an idea means
   giving it a repository of its own and adding people there — the API calls that
   have no meaning here say so rather than failing obscurely.
-- **Issue-backed to-dos.** The reference in the file (`(#12)`) round-trips
-  correctly, but nothing on the device talks to the issues API yet, so labels,
-  assignees and open/closed state come from the file rather than from GitHub.
 - **On-device verification.** CI compiles and packages the app, and `:core` is
   well covered, but JGit's behaviour on a real device — storage permissions,
   large clones, background time limits — has not been exercised on hardware.

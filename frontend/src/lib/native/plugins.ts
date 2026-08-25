@@ -37,6 +37,19 @@ export interface AuthPlugin {
 	signOut(): Promise<void>;
 }
 
+/** A to-do, plus whatever the issue behind it last said. */
+export interface NativeTodo {
+	/** Position in the file — the only identity a to-do has in git. */
+	index: number;
+	text: string;
+	done: boolean;
+	issue: number | null;
+	issueUrl: string | null;
+	labels: string[];
+	assignee: string | null;
+	comments: number;
+}
+
 /** One idea, as the files say it. Ids are a web idea; git has slugs. */
 export interface NativeTile {
 	slug: string;
@@ -48,7 +61,13 @@ export interface NativeTile {
 	repo: string | null;
 	logo: string | null;
 	notes: string;
-	todos?: { text: string; done: boolean; issue: number | null }[];
+	/** True when the idea lives in a repository of its own. */
+	linked: boolean;
+	/** ...and true once this device has a checkout of it. */
+	linkedCloned: boolean;
+	/** Commits in that checkout the remote hasn't seen. */
+	unsynced: number;
+	todos?: NativeTodo[];
 }
 
 export interface BoardStatus {
@@ -71,8 +90,10 @@ export interface BoardPlugin {
 	writeIdea(options: Partial<NativeTile> & { slug: string }): Promise<NativeTile>;
 	deleteIdea(options: { slug: string }): Promise<{ deleted: string }>;
 	reorder(options: { slugs: string[] }): Promise<{ rewritten: string[] }>;
-	/** Fetch, merge by meaning, push. */
+	/** Fetch, merge by meaning, push — the board and every idea repo it holds. */
 	sync(): Promise<{ merged: string[]; unsynced: number }>;
+	/** Clone or pull the repository an idea lives in, and refresh its issues. */
+	fetchLinked(options: { slug: string }): Promise<NativeTile>;
 }
 
 export const Auth = registerPlugin<AuthPlugin>('Auth');

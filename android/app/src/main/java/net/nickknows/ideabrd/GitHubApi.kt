@@ -2,6 +2,8 @@ package net.nickknows.ideabrd
 
 import java.net.HttpURLConnection
 import java.net.URL
+import net.nickknows.ideabrd.core.IssueInfo
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -17,6 +19,13 @@ object GitHubApi {
     private const val DEVICE_CODE_URL = "https://github.com/login/device/code"
     private const val TOKEN_URL = "https://github.com/login/oauth/access_token"
     private const val USER_URL = "https://api.github.com/user"
+    private const val API = "https://api.github.com"
+
+    // A page is the API's maximum; the cap bounds what one refresh can ask for,
+    // so a repo with thousands of issues costs a predictable number of requests
+    // rather than an unbounded walk. Matches the server's own limits.
+    private const val ISSUE_PAGE_SIZE = 100
+    private const val ISSUE_MAX_PAGES = 10
 
     /** What a person needs in front of them to authorise the device. */
     data class DeviceCode(
@@ -82,6 +91,89 @@ object GitHubApi {
             JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
                 .optString("login")
                 .takeIf { it.isNotEmpty() }
+        } catch (_: Exception) {
+            null
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    /**
+     * Every issue in a repo, newest first, as a map by number.
+     *
+     * Pull requests are filtered out: this endpoint returns them alongside
+     * issues, and a PR sharing a number with a to-do would otherwise drive its
+     * state. Paging stops early on a short page, so the ordinary repo costs
+     * exactly one request.
+     */
+    fun listIssues(repo: String, token: String): Map<Int, IssueInfo> {
+        val issues = mutableMapOf<Int, IssueInfo>()
+        for (page in 1..ISSUE_MAX_PAGES) {
+            val url = "$API/repos/$repo/issues?state=all&per_page=$ISSUE_PAGE_SIZE&page=$page"
+            val body = get(url, token) ?: break
+            val array = JSONArray(body)
+            for (i in 0 until array.length()) {
+                val item = array.getJSONObject(i)
+                if (item.has("pull_request")) continue
+                val labels = item.optJSONArray("labels") ?: JSONArray()
+                val assignee = item.optJSONObject("assignee")
+                issues[item.getInt("number")] = IssueInfo(
+                    number = item.getInt("number"),
+                    title = item.optString("title"),
+                    state = item.optString("state", "open"),
+                    htmlUrl = item.optString("html_url"),
+                    labels = (0 until labels.length()).map {
+                        labels.getJSONObject(it).optString("name")
+                    },
+                    assignee = assignee?.optString("login"),
+                    comments = item.optInt("comments"),
+                )
+            }
+            if (array.length() < ISSUE_PAGE_SIZE) break
+        }
+        return issues
+    }
+
+    /**
+     * Mirror a to-do's text and state onto its issue.
+     *
+     * Best-effort on purpose: a failure here leaves the board ahead of GitHub,
+     * which the next refresh corrects in GitHub's favour, because the issue
+     * always wins in the end.
+     */
+    fun updateIssue(repo: String, number: Int, title: String, closed: Boolean, token: String): Boolean {
+        val body = JSONObject()
+            .put("title", title)
+            .put("state", if (closed) "closed" else "open")
+            .toString()
+        val connection = URL("$API/repos/$repo/issues/$number").openConnection() as HttpURLConnection
+        return try {
+            // Android's HttpURLConnection is OkHttp underneath and accepts
+            // PATCH, unlike the JDK's, which validates against a fixed list.
+            connection.requestMethod = "PATCH"
+            connection.setRequestProperty("Content-Type", "application/json")
+            connection.setRequestProperty("Accept", "application/vnd.github+json")
+            connection.setRequestProperty("Authorization", "Bearer $token")
+            connection.setRequestProperty("User-Agent", "IdeaBRD-Android")
+            connection.doOutput = true
+            connection.outputStream.use { it.write(body.toByteArray()) }
+            connection.responseCode in 200..299
+        } catch (_: Exception) {
+            false
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    /** A plain authenticated GET, or null if it failed. */
+    private fun get(url: String, token: String): String? {
+        val connection = URL(url).openConnection() as HttpURLConnection
+        return try {
+            connection.setRequestProperty("Authorization", "Bearer $token")
+            connection.setRequestProperty("Accept", "application/vnd.github+json")
+            connection.setRequestProperty("User-Agent", "IdeaBRD-Android")
+            if (connection.responseCode !in 200..299) return null
+            connection.inputStream.bufferedReader().use { it.readText() }
         } catch (_: Exception) {
             null
         } finally {

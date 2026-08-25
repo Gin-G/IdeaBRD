@@ -12,6 +12,8 @@
 	import GitSyncPanel from '$lib/components/GitSyncPanel.svelte';
 	import PullRequestsPanel from '$lib/components/PullRequestsPanel.svelte';
 	import IdeaRepoPanel from '$lib/components/IdeaRepoPanel.svelte';
+	import NativeRepoPanel from '$lib/components/NativeRepoPanel.svelte';
+	import { isNative } from '$lib/native/plugins';
 	import IdeaModal from '$lib/components/IdeaModal.svelte';
 	import CollaboratorsPanel from '$lib/components/CollaboratorsPanel.svelte';
 
@@ -30,6 +32,9 @@
 
 	const canEdit = $derived(idea?.role === 'owner' || idea?.role === 'editor');
 	const isOwner = $derived(idea?.role === 'owner');
+	// On the device the board is git and there is no API behind these panels:
+	// live repo stats, pull requests and creating a repo all need a server.
+	const native = isNative();
 
 	onMount(() => {
 		load();
@@ -122,7 +127,7 @@
 
 	<!-- Single column unless there's a repo to show alongside — or an offer to
 	     give the idea one, which is the same column's job. -->
-	<div class="grid gap-6 {idea.github_repo || isOwner ? 'lg:grid-cols-[1fr,20rem]' : ''}">
+	<div class="grid gap-6 {idea.github_repo || (isOwner && !native) ? 'lg:grid-cols-[1fr,20rem]' : ''}">
 		<!-- Main column -->
 		<div class="space-y-6">
 			<div class="card p-6">
@@ -222,13 +227,17 @@
 		</div>
 
 		<!-- Side column -->
-		{#if idea.github_repo}
+		{#if idea.github_repo && native}
+			<div class="space-y-6">
+				<NativeRepoPanel {idea} onsynced={(updated) => (idea = updated)} />
+			</div>
+		{:else if idea.github_repo}
 			<div class="space-y-6">
 				<GitSyncPanel {idea} {canEdit} onsynced={(updated) => (idea = updated)} />
 				<GitHubPanel ideaId={idea.id} repo={idea.github_repo} />
 				<PullRequestsPanel ideaId={idea.id} repo={idea.github_repo} />
 			</div>
-		{:else if isOwner}
+		{:else if isOwner && !native}
 			<div class="space-y-6">
 				<IdeaRepoPanel {idea} oncreated={(updated) => (idea = updated)} />
 			</div>

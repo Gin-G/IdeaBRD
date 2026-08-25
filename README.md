@@ -443,6 +443,10 @@ it at a **git checkout instead of the API**. There is no server involved once it
   encrypted under an Android Keystore key and never crosses back over the bridge.
 - **Sync is fetch, merge, push**, with conflicts in an `IDEA.md` resolved by the same semantic
   merge the server uses. A conflict in anything else is reported, not guessed at.
+- **Ideas that live in their own repo are fetched too.** The board records only where such an
+  idea is, so the app clones that repository on request and then reads and writes its `IDEA.md`
+  directly. Issues behind `(#12)` to-dos are pulled and cached, so an item's title and state
+  come from GitHub and ticking its box closes the issue — offline, from the last fetch.
 - **Released by GitHub Actions.** `git tag v0.2.0 && git push origin v0.2.0` builds, signs and
   attaches an APK to a GitHub Release (`.github/workflows/android-release.yaml`).
 

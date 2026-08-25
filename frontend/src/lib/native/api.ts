@@ -83,23 +83,21 @@ function todoId(slug: string, index: number): number {
 const todoLocations = new Map<number, { slug: string; index: number }>();
 
 function toTodos(tile: NativeTile): Todo[] {
-	return (tile.todos ?? []).map((todo, index) => {
-		const id = todoId(tile.slug, index);
-		todoLocations.set(id, { slug: tile.slug, index });
+	return (tile.todos ?? []).map((todo) => {
+		const id = todoId(tile.slug, todo.index);
+		todoLocations.set(id, { slug: tile.slug, index: todo.index });
 		return {
 			id,
 			text: todo.text,
 			done: todo.done,
-			position: index,
+			position: todo.index,
 			github_issue_number: todo.issue,
-			github_issue_url: todo.issue && tile.repo
-				? `https://github.com/${tile.repo}/issues/${todo.issue}`
-				: null,
-			// Issue context is mirrored by the server from the API; a git-only
-			// board has only what the file carries.
-			github_issue_labels: null,
-			github_issue_assignee: null,
-			github_issue_comments: null
+			github_issue_url: todo.issueUrl,
+			// As fresh as the last fetch: the issue is GitHub's, and this is
+			// what it last said.
+			github_issue_labels: todo.labels.length ? todo.labels : null,
+			github_issue_assignee: todo.assignee,
+			github_issue_comments: todo.issue !== null ? todo.comments : null
 		};
 	});
 }
@@ -131,7 +129,9 @@ function toIdea(tile: NativeTile): Idea {
 		todos: toTodos(tile),
 		git_synced_at: null,
 		git_sync_error: null,
-		git_file_missing: false
+		// An idea that lives in its own repo has nothing here until that repo
+		// is cloned — the board only records where it is.
+		git_file_missing: tile.linked && !tile.linkedCloned
 	};
 }
 
@@ -139,10 +139,17 @@ function toIdea(tile: NativeTile): Idea {
 async function writeTodos(slug: string, todos: Todo[]): Promise<NativeTile> {
 	return BoardPlugin.writeIdea({
 		slug,
+		// Only the three fields the file holds. The rest is the issue's, and
+		// the plugin pushes a ticked box back to it.
 		todos: todos.map((t) => ({
+			index: t.position,
 			text: t.text,
 			done: t.done,
-			issue: t.github_issue_number
+			issue: t.github_issue_number,
+			issueUrl: null,
+			labels: [],
+			assignee: null,
+			comments: 0
 		}))
 	});
 }
@@ -249,7 +256,8 @@ export const nativeApi = {
 				github_issue_comments: null
 			}
 		];
-		return toTodos(await writeTodos(slug, next))[next.length - 1];
+		const written = toTodos(await writeTodos(slug, next));
+		return written[written.length - 1];
 	},
 
 	updateTodo: async (id: number, data: Partial<Todo>): Promise<Todo> => {
@@ -265,8 +273,18 @@ export const nativeApi = {
 		if (!at) return;
 		const todos = await readTodos(at.slug);
 		todos.splice(at.index, 1);
-		await writeTodos(at.slug, todos);
+		// Positions are the identity, so renumber before writing.
+		await writeTodos(
+			at.slug,
+			todos.map((todo, position) => ({ ...todo, position }))
+		);
 	},
+
+	/** Fetch the repository an idea lives in — the tile is a pointer until then. */
+	syncIdea: async (id: number): Promise<Idea> =>
+		toIdea(await BoardPlugin.fetchLinked({ slug: await slugFor(id) })),
+	initIdeaSync: async (id: number): Promise<Idea> =>
+		toIdea(await BoardPlugin.fetchLinked({ slug: await slugFor(id) })),
 
 	board: async (): Promise<Board> => {
 		const status = await BoardPlugin.status();
@@ -319,8 +337,6 @@ export const nativeApi = {
 	},
 
 	// Server features with no meaning on a git-only board.
-	syncIdea: unavailable,
-	initIdeaSync: unavailable,
 	promoteTodo: unavailable,
 	importIssues: unavailable,
 	github: unavailable,

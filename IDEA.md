@@ -1,6 +1,6 @@
 ---
 status: active
-progress: 84
+progress: 85
 ---
 
 # IdeaBRD
@@ -101,6 +101,8 @@ authoritative until reconciliation says the git copy has earned the swap.
 - [x] Create a board repo from the app on first run — pick the account or org, get an empty repo, and publish the existing board into it as that repo's first commit
 - [ ] Run the live GitHub suite against a real repo — `backend/tests/live` and a weekly workflow now exist, but nothing has actually run them until `IDEABRD_GITHUB_TOKEN` is set on the repository
 - [ ] Try the Android app on real hardware — CI builds and packages it, but JGit on a device (clone size, storage, background time limits) has never been exercised
-- [ ] Give the Android release a stable signing key — until `ANDROID_KEYSTORE_BASE64` is set every release is signed differently, and Android refuses to install one over another
+- [ ] Give the Android release a stable signing key — `android/scripts/make-signing-key.sh` makes one and prints the four secrets to set; until they exist every release is signed differently and Android refuses to install one over another
 - [ ] Point a GitHub webhook at the deployment and put `webhook_secret` in OpenBao — the receiver refuses every request until the secret exists, so it is code that isn't running yet
-- [ ] Show issue-backed to-dos properly on the phone — the `(#12)` reference round-trips, but nothing there talks to the issues API, so labels and open/closed state come from the file
+- [x] Read a repo-linked idea on the phone — the board repo records only where such an idea lives, so a linked tile was a link and an empty page; the app now clones that repository on request and reads and writes its own IDEA.md
+- [x] Show issue-backed to-dos properly on the phone — issues are fetched and cached for offline, the item they back takes its title and state from them, and ticking a box closes the issue
+- [ ] Do the GitHub-side actions from the phone — promoting a to-do to an issue, importing a repo's issues and giving an idea a repo are hidden there, since each has to create something on GitHub before the board can point at it

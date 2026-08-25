@@ -9,58 +9,59 @@ import com.getcapacitor.annotation.CapacitorPlugin
 import java.io.File
 import java.util.concurrent.Executors
 import net.nickknows.ideabrd.core.BoardStore
-import net.nickknows.ideabrd.core.IDEA_FILE
+import net.nickknows.ideabrd.core.IssueInfo
+import net.nickknows.ideabrd.core.LinkedRepoStore
 import net.nickknows.ideabrd.core.ParsedIdeaFile
 import net.nickknows.ideabrd.core.ParsedTodo
-import net.nickknows.ideabrd.core.mergeIdeaFiles
-import org.eclipse.jgit.api.Git
-import org.eclipse.jgit.api.MergeResult
-import org.eclipse.jgit.lib.ObjectId
+import net.nickknows.ideabrd.core.applyIssues
+import net.nickknows.ideabrd.core.issueEdits
 import org.eclipse.jgit.lib.PersonIdent
-import org.eclipse.jgit.lib.Repository
-import org.eclipse.jgit.revwalk.RevWalk
-import org.eclipse.jgit.revwalk.filter.RevFilter
-import org.eclipse.jgit.transport.RemoteRefUpdate
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider
-import org.eclipse.jgit.treewalk.TreeWalk
 
 /**
- * The board, as a git repository on the phone.
+ * The board, as git repositories on the phone.
  *
- * This is the half of the git-only client that has to be native: JGit, a real
- * working copy, and the merge that happens when a board edited offline meets a
- * board edited somewhere else. Everything above it — what an idea is, what the
+ * This is the half of the git-only client that has to be native: JGit, real
+ * working copies, and the merge that happens when a board edited offline meets
+ * one edited somewhere else. Everything above it — what an idea is, what the
  * file says, where a tile sits — is in `:core`, shared with the tests and
  * matched byte for byte against the server's renderer.
  *
- * The design rule is that this plugin exposes *board* operations, not file
- * operations. The web layer asks for the ideas and gets ideas; it never sees a
- * path, a blob or a commit. That keeps one implementation of the format (the
- * Kotlin port) rather than a second one in TypeScript, which would be the same
- * mistake as having two parsers on the server.
+ * **Two kinds of repository.** The board repo holds every tile. But an idea
+ * that has a repository of its own is recorded there as a *reference* — rank,
+ * colour and a link, nothing else — because its notes and to-dos are tracked in
+ * that repository under its own history. So opening such a tile means reading
+ * that repository too, and the app clones it on demand. Without that, a
+ * repo-linked idea on the phone is a link and an empty page.
  *
- * Every write is its own commit. Syncing is fetch, merge, push, in that order,
- * and a conflict in an IDEA.md is resolved by meaning rather than reported as a
- * conflict — the whole reason `mergeIdeaFiles` exists.
+ * **Issues stay GitHub's.** A to-do carrying `(#12)` is owned by that issue:
+ * its title and whether it is closed come from GitHub, not from the file, and
+ * ticking the box here closes the issue. Between refreshes the last known state
+ * is served from a cache, because a board has to open on a train.
+ *
+ * The design rule is that this exposes *board* operations, not file operations.
+ * The web layer asks for ideas and gets ideas; it never sees a path, a blob or
+ * a commit.
  */
 @CapacitorPlugin(name = "Board")
 class BoardPlugin : Plugin() {
 
     private val work = Executors.newSingleThreadExecutor()
 
-    private val repoDir: File
-        get() = File(context.filesDir, "board")
-
-    private val store: BoardStore
-        get() = BoardStore(repoDir)
+    private val boardDir: File get() = File(context.filesDir, "board")
+    private val linkedDir: File get() = File(context.filesDir, "linked")
+    private val store: BoardStore get() = BoardStore(boardDir)
+    private val issues: IssueCache get() = IssueCache(File(context.filesDir, "issues"))
 
     private fun settings() = context.getSharedPreferences("ideabrd-board", 0)
 
+    private fun token(): String? = TokenStore.token(context)
+
     private fun credentials(): UsernamePasswordCredentialsProvider? =
-        TokenStore.token(context)?.let {
-            // GitHub accepts a token as the password against this username;
-            // the token is never put in the URL, where it would end up in the
-            // repo's own config on disk.
+        token()?.let {
+            // GitHub accepts a token as the password against this username; it
+            // is never put in the URL, where it would end up in the repo's own
+            // config on disk.
             UsernamePasswordCredentialsProvider("x-access-token", it)
         }
 
@@ -72,6 +73,15 @@ class BoardPlugin : Plugin() {
             else "ideabrd@users.noreply.github.com",
         )
     }
+
+    private fun boardRepo(): GitRepo? {
+        val repo = settings().getString("repo", null) ?: return null
+        return GitRepo(boardDir, repo, settings().getString("branch", null))
+    }
+
+    /** Where a linked idea's repository is checked out. One directory per repo. */
+    private fun linkedRepo(repo: String) =
+        GitRepo(File(linkedDir, repo.replace("/", "__")), repo)
 
     /** Run off the main thread and turn any failure into a rejected call. */
     private fun background(call: PluginCall, block: () -> JSObject?) {
@@ -95,14 +105,15 @@ class BoardPlugin : Plugin() {
     @PluginMethod
     fun configure(call: PluginCall) {
         val repo = call.getString("repo") ?: return call.reject("repo is required")
-        val branch = call.getString("branch") ?: "main"
+        val branch = call.getString("branch")
         background(call) {
             val previous = settings().getString("repo", null)
-            if (previous != null && previous != repo && repoDir.exists()) {
-                repoDir.deleteRecursively()
+            if (previous != null && previous != repo && boardDir.exists()) {
+                boardDir.deleteRecursively()
             }
             settings().edit().putString("repo", repo).putString("branch", branch).apply()
-            if (!File(repoDir, ".git").exists()) clone(repo, branch)
+            val git = GitRepo(boardDir, repo, branch)
+            if (!git.cloned) git.clone(credentials())
             status()
         }
     }
@@ -113,46 +124,30 @@ class BoardPlugin : Plugin() {
     }
 
     private fun status(): JSObject {
-        val repo = settings().getString("repo", null)
+        val git = boardRepo()
         val result = JSObject()
-        result.put("repo", repo)
-        result.put("branch", settings().getString("branch", "main"))
-        result.put("cloned", File(repoDir, ".git").exists())
-        result.put("authenticated", TokenStore.token(context) != null)
+        result.put("repo", git?.repo)
+        result.put("branch", settings().getString("branch", "main") ?: "main")
+        result.put("cloned", git?.cloned == true)
+        result.put("authenticated", token() != null)
         result.put("login", TokenStore.login(context))
-        if (File(repoDir, ".git").exists()) {
-            Git.open(repoDir).use { git ->
-                // "Unsynced" is the count of commits made here that the remote
-                // has not seen — the thing a person actually wants to know when
-                // they are about to get on a plane.
-                result.put("unsynced", unpushed(git))
-                result.put("dirty", !git.status().call().isClean)
-            }
+        if (git?.cloned == true) {
+            // "Unsynced" counts commits made here that the remote has not seen —
+            // across the board repo and every idea repo, since a person who
+            // edited a linked idea offline is owed the same warning.
+            result.put("unsynced", git.unpushed() + linkedClones().sumOf { it.unpushed() })
+            result.put("dirty", git.isDirty())
         }
         return result
     }
 
-    private fun clone(repo: String, branch: String) {
-        repoDir.parentFile?.mkdirs()
-        Git.cloneRepository()
-            .setURI("https://github.com/$repo.git")
-            .setDirectory(repoDir)
-            .setBranch(branch)
-            .setCredentialsProvider(credentials())
-            .call()
-            .close()
-    }
-
-    private fun unpushed(git: Git): Int {
-        val branch = git.repository.branch ?: return 0
-        val local = git.repository.resolve(branch) ?: return 0
-        val remote = git.repository.resolve("refs/remotes/origin/$branch") ?: return 0
-        RevWalk(git.repository).use { walk ->
-            walk.markStart(walk.parseCommit(local))
-            walk.markUninteresting(walk.parseCommit(remote))
-            return walk.count()
-        }
-    }
+    /** Every linked idea repo this device has a checkout of. */
+    private fun linkedClones(): List<GitRepo> =
+        store.read()
+            .mapNotNull { it.file.repo }
+            .distinct()
+            .map { linkedRepo(it) }
+            .filter { it.cloned }
 
     // ---- reading -------------------------------------------------------
 
@@ -174,25 +169,49 @@ class BoardPlugin : Plugin() {
         }
     }
 
+    /**
+     * One tile as the web layer sees it.
+     *
+     * For an idea with a repository of its own, the board file supplies only
+     * where it sits — rank, colour, the link — and the content comes from that
+     * repository's checkout when there is one. Never from the network: a read
+     * has to work on a train, and cloning is something the person asks for.
+     */
     private fun tileJson(tile: BoardStore.Tile, withTodos: Boolean): JSObject {
+        val repo = tile.file.repo
+        val linked = repo?.let { linkedRepo(it) }
+        val content = if (linked?.cloned == true) LinkedRepoStore(linked.dir).read() else null
+        val idea = content ?: tile.file
+        val known = repo?.let { issues.load(it) } ?: emptyMap()
+
         val json = JSObject()
         json.put("slug", tile.slug)
-        json.put("title", tile.file.title)
-        json.put("status", tile.file.status ?: "idea")
-        json.put("progress", tile.file.progress ?: 0)
+        json.put("title", idea.title ?: tile.slug)
+        json.put("status", idea.status ?: "idea")
+        json.put("progress", idea.progress ?: 0)
+        // Colour and rank are the board's, never the idea's own repo's.
         json.put("color", tile.file.color ?: BoardStore.DEFAULT_COLOR)
         json.put("rank", tile.file.rank)
-        json.put("repo", tile.file.repo)
+        json.put("repo", repo)
         json.put("logo", tile.logo)
-        json.put("notes", tile.file.notes)
+        json.put("notes", idea.notes)
+        json.put("linked", repo != null)
+        json.put("linkedCloned", linked?.cloned == true)
+        json.put("unsynced", linked?.unpushed() ?: 0)
         if (withTodos) {
             val todos = JSArray()
-            tile.file.todos.forEach { todo ->
+            applyIssues(idea.todos, known).forEachIndexed { index, todo ->
+                val issue = todo.issue?.let { known[it] }
                 todos.put(
                     JSObject()
+                        .put("index", index)
                         .put("text", todo.text)
                         .put("done", todo.done)
                         .put("issue", todo.issue)
+                        .put("issueUrl", issue?.htmlUrl)
+                        .put("labels", JSArray(issue?.labels.orEmpty().toTypedArray()))
+                        .put("assignee", issue?.assignee)
+                        .put("comments", issue?.comments ?: 0)
                 )
             }
             json.put("todos", todos)
@@ -207,7 +226,7 @@ class BoardPlugin : Plugin() {
         val title = call.getString("title") ?: return call.reject("title is required")
         background(call) {
             val tile = store.create(title, call.getString("color") ?: BoardStore.DEFAULT_COLOR)
-            commit("Add idea: ${tile.file.title}")
+            boardRepo()?.commitAll("Add idea: ${tile.file.title}", author())
             tileJson(store.readIdea(tile.slug)!!, withTodos = true)
         }
     }
@@ -218,14 +237,24 @@ class BoardPlugin : Plugin() {
      * Fields the caller leaves out keep the value already in the file, so a
      * page that only knows about the checkbox it just ticked does not have to
      * send the whole idea back to avoid erasing the rest of it.
+     *
+     * Where the idea goes depends on where it lives: into its own repository
+     * when it has one and we have a checkout, into the board repo otherwise.
+     * Writing an idea's content into the board would be creating the second
+     * copy the reference layout exists to avoid.
      */
     @PluginMethod
     fun writeIdea(call: PluginCall) {
         val slug = call.getString("slug") ?: return call.reject("slug is required")
         background(call) {
-            val current = store.readIdea(slug)
+            val tile = store.readIdea(slug)
                 ?: throw IllegalArgumentException("No idea called $slug on this board")
-            val todos = call.getArray("todos", null)?.let { array ->
+            val repo = tile.file.repo
+            val linked = repo?.let { linkedRepo(it) }
+            val store2 = linked?.takeIf { it.cloned }?.let { LinkedRepoStore(it.dir) }
+            val current = store2?.read() ?: tile.file
+
+            val submitted = call.getArray("todos", null)?.let { array ->
                 (0 until array.length()).map { i ->
                     val item = array.getJSONObject(i)
                     ParsedTodo(
@@ -240,18 +269,45 @@ class BoardPlugin : Plugin() {
                 }
             }
             val updated = ParsedIdeaFile(
-                title = call.getString("title") ?: current.file.title,
-                notes = call.getString("notes") ?: current.file.notes,
-                status = call.getString("status") ?: current.file.status,
-                progress = call.getInt("progress") ?: current.file.progress,
-                color = call.getString("color") ?: current.file.color,
-                rank = current.file.rank,
-                repo = call.getString("repo") ?: current.file.repo,
-                todos = todos ?: current.file.todos,
+                title = call.getString("title") ?: current.title,
+                notes = call.getString("notes") ?: current.notes,
+                status = call.getString("status") ?: current.status,
+                progress = call.getInt("progress") ?: current.progress,
+                color = call.getString("color") ?: tile.file.color,
+                rank = tile.file.rank,
+                repo = repo,
+                todos = submitted ?: current.todos,
             )
-            store.writeIdea(slug, updated)
-            commit("Update idea: ${updated.title}")
+
+            if (store2 != null && repo != null) {
+                store2.write(updated)
+                linked.commitAll("Update idea: ${updated.title}", author())
+                // The colour is the board's to keep, so a change to it still
+                // rewrites the board's own file.
+                if (updated.color != tile.file.color) {
+                    store.writeIdea(slug, tile.file.copy(color = updated.color))
+                    boardRepo()?.commitAll("Recolour tile: ${updated.title}", author())
+                }
+                mirrorIssues(repo, current.todos, updated.todos)
+            } else {
+                store.writeIdea(slug, updated)
+                boardRepo()?.commitAll("Update idea: ${updated.title}", author())
+            }
             tileJson(store.readIdea(slug)!!, withTodos = true)
+        }
+    }
+
+    /**
+     * Push a ticked box or a retitled item back to the issue that owns it.
+     *
+     * Best-effort, exactly like the server: a failure leaves the board ahead of
+     * GitHub, and the next refresh resolves it the other way, because the issue
+     * always wins in the end.
+     */
+    private fun mirrorIssues(repo: String, before: List<ParsedTodo>, after: List<ParsedTodo>) {
+        val token = token() ?: return
+        issueEdits(before, after).forEach { todo ->
+            GitHubApi.updateIssue(repo, todo.issue!!, todo.text, todo.done, token)
         }
     }
 
@@ -261,7 +317,10 @@ class BoardPlugin : Plugin() {
         background(call) {
             val title = store.readIdea(slug)?.file?.title ?: slug
             store.delete(slug)
-            commit("Remove idea: $title")
+            // Only the tile goes. An idea with a repository of its own still
+            // has one, and deleting somebody's repository because a board was
+            // tidied up would be a startling thing for a board to do.
+            boardRepo()?.commitAll("Remove idea: $title", author())
             JSObject().put("deleted", slug)
         }
     }
@@ -272,149 +331,72 @@ class BoardPlugin : Plugin() {
         background(call) {
             val order = (0 until slugs.length()).map { slugs.getString(it) }
             val rewritten = store.reorder(order)
-            if (rewritten.isNotEmpty()) commit("Reorder board")
+            if (rewritten.isNotEmpty()) boardRepo()?.commitAll("Reorder board", author())
             JSObject().put("rewritten", JSArray(rewritten.toTypedArray()))
-        }
-    }
-
-    /** Stage everything under the board and commit it, if anything changed. */
-    private fun commit(message: String) {
-        Git.open(repoDir).use { git ->
-            git.add().addFilepattern(".").call()
-            git.add().addFilepattern(".").setUpdate(true).call() // pick up deletions
-            if (git.status().call().isClean) return
-            git.commit()
-                .setMessage("$message (via IdeaBRD)")
-                .setAuthor(author())
-                .setCommitter(author())
-                .call()
         }
     }
 
     // ---- syncing -------------------------------------------------------
 
     /**
-     * Fetch, merge and push, in that order.
+     * Fetch, merge and push the board — and every idea repo this device holds.
      *
-     * The merge is where the offline story is either kept or broken. Git's own
-     * three-way merge on an IDEA.md is nearly useless: both sides re-render the
-     * whole file, so any real edit conflicts on every line. Those conflicts are
-     * resolved here by parsing both versions and merging them by meaning, using
-     * the same code the server uses — so two people editing different parts of
-     * an idea never see a conflict at all, and neither loses their edit.
-     *
-     * A conflict in anything that isn't an IDEA.md is left alone and reported:
-     * this knows how to merge ideas, and pretending to know how to merge the
-     * rest of somebody's repository would be worse than saying so.
+     * Syncing one and not the other would be the worst of both: a board that
+     * says an idea changed, and an idea repo that never heard about it.
      */
     @PluginMethod
     fun sync(call: PluginCall) {
         background(call) {
             val credentials = credentials()
                 ?: throw IllegalStateException("Sign in to GitHub before syncing")
-            val result = JSObject()
-            Git.open(repoDir).use { git ->
-                val branch = git.repository.branch
-                git.fetch().setCredentialsProvider(credentials).setRemote("origin").call()
-
-                val remote = git.repository.resolve("refs/remotes/origin/$branch")
-                val local = git.repository.resolve(branch)
-                val resolved = mutableListOf<String>()
-                val conflicts = mutableListOf<String>()
-
-                if (remote != null && remote != local) {
-                    val merge = git.merge().include(remote).setCommit(true).call()
-                    if (merge.mergeStatus == MergeResult.MergeStatus.CONFLICTING) {
-                        val base = mergeBase(git.repository, local!!, remote)
-                        merge.conflicts.keys.forEach { path ->
-                            if (path.endsWith(IDEA_FILE) &&
-                                resolveIdeaConflict(git, path, base, local, remote)
-                            ) {
-                                resolved += path
-                            } else {
-                                conflicts += path
-                            }
-                        }
-                        if (conflicts.isEmpty()) {
-                            git.commit()
-                                .setMessage("Merge board (via IdeaBRD)")
-                                .setAuthor(author())
-                                .setCommitter(author())
-                                .call()
-                        } else {
-                            // Leave the working copy as git left it: a person
-                            // with a real conflict needs to see it, and an app
-                            // that "resolves" it by picking a side is how
-                            // somebody's afternoon disappears.
-                            throw IllegalStateException(
-                                "Conflicts this app can't merge: ${conflicts.joinToString()}"
-                            )
-                        }
-                    }
-                }
-
-                val pushed = git.push()
-                    .setCredentialsProvider(credentials)
-                    .setRemote("origin")
-                    .add(branch)
-                    .call()
-                pushed.forEach { push ->
-                    push.remoteUpdates.forEach { update ->
-                        if (update.status !in ACCEPTED_PUSH) {
-                            throw IllegalStateException(
-                                "Push rejected: ${update.status} ${update.message ?: ""}"
-                            )
-                        }
-                    }
-                }
-                result.put("merged", JSArray(resolved.toTypedArray()))
-                result.put("unsynced", unpushed(git))
+            val board = boardRepo() ?: throw IllegalStateException("No board repo configured")
+            val merged = mutableListOf<String>()
+            merged += board.sync(credentials, author()).merged
+            linkedClones().forEach { linked ->
+                merged += linked.sync(credentials, author()).merged
+                refreshIssues(linked.repo)
             }
-            result
+            JSObject()
+                .put("merged", JSArray(merged.toTypedArray()))
+                .put("unsynced", board.unpushed() + linkedClones().sumOf { it.unpushed() })
         }
     }
 
-    private fun mergeBase(repository: Repository, a: ObjectId, b: ObjectId): ObjectId? =
-        RevWalk(repository).use { walk ->
-            walk.revFilter = RevFilter.MERGE_BASE
-            walk.markStart(walk.parseCommit(a))
-            walk.markStart(walk.parseCommit(b))
-            walk.next()?.id
+    /**
+     * Fetch an idea that lives in its own repository — cloning it the first time.
+     *
+     * This is what turns a reference on the board into the idea itself, so it
+     * is also where the app first asks the network for anything on the person's
+     * behalf. It is always a deliberate action, never a side effect of opening
+     * a tile: an idea repo can be large, and a phone is often on a metered
+     * connection.
+     */
+    @PluginMethod
+    fun fetchLinked(call: PluginCall) {
+        val slug = call.getString("slug") ?: return call.reject("slug is required")
+        background(call) {
+            val tile = store.readIdea(slug)
+                ?: throw IllegalArgumentException("No idea called $slug on this board")
+            val repo = tile.file.repo
+                ?: throw IllegalStateException("This idea has no repository of its own")
+            val credentials = credentials()
+                ?: throw IllegalStateException("Sign in to GitHub first")
+            val linked = linkedRepo(repo)
+            if (!linked.cloned) linked.clone(credentials) else linked.sync(credentials, author())
+            refreshIssues(repo)
+            tileJson(store.readIdea(slug)!!, withTodos = true)
         }
-
-    /** Merge one conflicted IDEA.md by meaning. True when it worked. */
-    private fun resolveIdeaConflict(
-        git: Git,
-        path: String,
-        base: ObjectId?,
-        ours: ObjectId?,
-        theirs: ObjectId,
-    ): Boolean {
-        val ourText = blob(git.repository, ours, path) ?: return false
-        val theirText = blob(git.repository, theirs, path) ?: return false
-        val baseText = base?.let { blob(git.repository, it, path) }
-        val (merged, _) = mergeIdeaFiles(baseText, ourText, theirText)
-        File(git.repository.workTree, path).writeText(merged)
-        git.add().addFilepattern(path).call()
-        return true
     }
 
-    /** One file's text at one commit, or null if it wasn't there. */
-    private fun blob(repository: Repository, commit: ObjectId?, path: String): String? {
-        if (commit == null) return null
-        RevWalk(repository).use { walk ->
-            val tree = walk.parseCommit(commit).tree
-            TreeWalk.forPath(repository, path, tree).use { treeWalk ->
-                if (treeWalk == null) return null
-                return String(repository.open(treeWalk.getObjectId(0)).bytes, Charsets.UTF_8)
+    /** Update the cached issues for a repo. Silent on failure — it is a cache. */
+    private fun refreshIssues(repo: String) {
+        val token = token() ?: return
+        val found: Map<Int, IssueInfo> =
+            try {
+                GitHubApi.listIssues(repo, token)
+            } catch (_: Exception) {
+                return
             }
-        }
-    }
-
-    private companion object {
-        val ACCEPTED_PUSH = setOf(
-            RemoteRefUpdate.Status.OK,
-            RemoteRefUpdate.Status.UP_TO_DATE,
-        )
+        if (found.isNotEmpty()) issues.save(repo, found.values)
     }
 }

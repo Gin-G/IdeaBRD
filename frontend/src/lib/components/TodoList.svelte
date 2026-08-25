@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { api } from '$lib/api';
+	import { isNative } from '$lib/native/plugins';
 	import type { Todo } from '$lib/types';
 
 	let {
@@ -16,6 +17,12 @@
 		repo?: string | null;
 		onchange?: () => void;
 	} = $props();
+
+	// Opening and importing issues are server-side actions. On the device the
+	// issues behind existing items still show and still drive them; making new
+	// ones is not there yet, and a button that only ever errors is worse than
+	// no button.
+	const issueActions = !isNative();
 
 	let newText = $state('');
 	let adding = $state(false);
@@ -101,7 +108,7 @@
 	<div class="mb-3 flex flex-wrap items-center justify-between gap-2">
 		<h3 class="font-semibold">To-do</h3>
 		<div class="flex items-center gap-3">
-			{#if canEdit && repo}
+			{#if canEdit && repo && issueActions}
 				<button
 					type="button"
 					class="text-xs text-slate-500 transition hover:text-indigo-300 disabled:cursor-wait"
@@ -187,7 +194,7 @@
 						{/if}
 					</span>
 				{/if}
-				{#if canEdit && repo && !todo.github_issue_number}
+				{#if canEdit && repo && issueActions && !todo.github_issue_number}
 					<button
 						type="button"
 						title="Open a GitHub issue for this to-do"

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { api, ApiError } from '$lib/api';
+	import { isNative } from '$lib/native/plugins';
 	import { STATUSES, type Idea, type Status, type Todo } from '$lib/types';
 	import TileLogo from './TileLogo.svelte';
 	import TodoList from './TodoList.svelte';
@@ -35,6 +36,11 @@
 	let uploadError = $state('');
 
 	const uploaded = $derived(logo.startsWith('/api/'));
+
+	// Linking a repo means seeding it with the idea's IDEA.md, which is the
+	// server's job. Offering the field on the device would let someone turn a
+	// held idea into a pointer to a repo that doesn't have it yet.
+	const canLinkRepo = !isNative();
 
 	// The to-do list writes through to the API as it is edited, so it keeps its
 	// own copy rather than waiting for Save like the fields above it.
@@ -174,12 +180,22 @@
 				{#if uploadError}<p class="mt-1.5 text-xs text-rose-300">{uploadError}</p>{/if}
 			</div>
 
-			<div>
-				<label class="mb-1 block text-xs font-medium text-slate-400" for="repo"
-					>GitHub repo (optional)</label
-				>
-				<input id="repo" class="input" bind:value={repo} placeholder="owner/name" />
-			</div>
+			{#if canLinkRepo}
+				<div>
+					<label class="mb-1 block text-xs font-medium text-slate-400" for="repo"
+						>GitHub repo (optional)</label
+					>
+					<input id="repo" class="input" bind:value={repo} placeholder="owner/name" />
+				</div>
+			{:else if repo}
+				<div>
+					<span class="mb-1 block text-xs font-medium text-slate-400">GitHub repo</span>
+					<p class="font-mono text-sm text-slate-300">{repo}</p>
+					<p class="mt-1 text-xs text-slate-500">
+						This idea lives in that repository; its notes and to-dos are committed there.
+					</p>
+				</div>
+			{/if}
 
 			{#if idea}
 				<!-- The to-do list, here as well as on the full page: promoting an item
