@@ -32,8 +32,9 @@
 
 	const canEdit = $derived(idea?.role === 'owner' || idea?.role === 'editor');
 	const isOwner = $derived(idea?.role === 'owner');
-	// On the device the board is git and there is no API behind these panels:
-	// live repo stats, pull requests and creating a repo all need a server.
+	// On the device the board is git, so a linked idea gets its own panel: the
+	// stars-and-forks and pull-request panels are live API reads, and there is
+	// no server to read them through.
 	const native = isNative();
 
 	onMount(() => {
@@ -127,7 +128,7 @@
 
 	<!-- Single column unless there's a repo to show alongside — or an offer to
 	     give the idea one, which is the same column's job. -->
-	<div class="grid gap-6 {idea.github_repo || (isOwner && !native) ? 'lg:grid-cols-[1fr,20rem]' : ''}">
+	<div class="grid gap-6 {idea.github_repo || isOwner ? 'lg:grid-cols-[1fr,20rem]' : ''}">
 		<!-- Main column -->
 		<div class="space-y-6">
 			<div class="card p-6">
@@ -237,7 +238,7 @@
 				<GitHubPanel ideaId={idea.id} repo={idea.github_repo} />
 				<PullRequestsPanel ideaId={idea.id} repo={idea.github_repo} />
 			</div>
-		{:else if isOwner && !native}
+		{:else if isOwner}
 			<div class="space-y-6">
 				<IdeaRepoPanel {idea} oncreated={(updated) => (idea = updated)} />
 			</div>

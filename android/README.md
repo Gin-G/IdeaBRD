@@ -107,7 +107,9 @@ A to-do ending in `(#12)` is owned by that issue, exactly as on the server: its
 title and whether it is closed come from GitHub rather than from the file, and
 ticking the box here closes the issue. Between fetches the last known state is
 served from a cache kept outside the checkout, so a board still opens on a
-train.
+train. Promoting a to-do to an issue and importing a repo's open issues both
+work here too, and a held idea can be given a repository of its own — the app
+creates it, pushes the idea into it, and leaves the board holding a reference.
 
 ## Syncing
 
@@ -130,13 +132,14 @@ rest of somebody's repository would be worse than saying so.
 
 - **Logos.** The app finds an `idea_logo.*` beside an idea but does not display
   or replace it.
-- **The GitHub-side actions.** Existing issues drive the to-dos that reference
-  them, but *promoting* a to-do to an issue, *importing* a repo's issues and
-  *giving an idea a repo* all have to create something on GitHub before the
-  board can point at it, and are still server-only. Each is hidden here rather
-  than left to fail — including the repo field in the edit dialog, since
-  linking a repo that hasn't been seeded would turn a held idea into a pointer
-  to an empty one.
+- **Linking an idea to a repository that already exists.** Creating one for an
+  idea works here; pointing an idea at a repo somebody already has does not,
+  because that repo may have no `IDEA.md` and seeding somebody's repository
+  unprompted is the thing the opt-in gate exists to prevent. The repo field in
+  the edit dialog is hidden here for that reason.
+- **Live repo data.** Stars, forks and open pull requests are API reads the
+  server does; the device shows the repository and its issues, not its
+  statistics.
 - **Collaboration.** Collaborators, invitations and roles are server features
   that assume an account system. On a git-only board, sharing an idea means
   giving it a repository of its own and adding people there — the API calls that

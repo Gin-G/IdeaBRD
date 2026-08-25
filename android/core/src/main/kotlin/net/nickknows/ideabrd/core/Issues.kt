@@ -64,3 +64,29 @@ fun issueEdits(
         was.done != todo.done || was.text != todo.text
     }
 }
+
+
+/**
+ * Add a to-do for every issue the list doesn't already reference.
+ *
+ * The board could always push work into GitHub — promote a to-do and it becomes
+ * an issue — but never pick up work that started there, so a repo with a
+ * hundred issues arrived at an empty tile. Importing is that missing direction,
+ * and it binds the same way round: an imported item is issue-backed, so the
+ * issue keeps owning its title and its state.
+ *
+ * Issues already referenced are skipped, so importing twice is a no-op rather
+ * than a pile of duplicates. Order is by issue number, which is the order they
+ * were opened in.
+ */
+fun mergeImportedIssues(
+    todos: List<ParsedTodo>,
+    issues: Collection<IssueInfo>,
+): List<ParsedTodo> {
+    val known = todos.mapNotNull { it.issue }.toSet()
+    val imported = issues
+        .filter { it.number !in known }
+        .sortedBy { it.number }
+        .map { ParsedTodo(it.title, it.closed, it.number) }
+    return todos + imported
+}

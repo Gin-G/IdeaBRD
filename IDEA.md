@@ -105,4 +105,5 @@ authoritative until reconciliation says the git copy has earned the swap.
 - [ ] Point a GitHub webhook at the deployment and put `webhook_secret` in OpenBao — the receiver refuses every request until the secret exists, so it is code that isn't running yet
 - [x] Read a repo-linked idea on the phone — the board repo records only where such an idea lives, so a linked tile was a link and an empty page; the app now clones that repository on request and reads and writes its own IDEA.md
 - [x] Show issue-backed to-dos properly on the phone — issues are fetched and cached for offline, the item they back takes its title and state from them, and ticking a box closes the issue
-- [ ] Do the GitHub-side actions from the phone — promoting a to-do to an issue, importing a repo's issues and giving an idea a repo are hidden there, since each has to create something on GitHub before the board can point at it
+- [x] Do the GitHub-side actions from the phone — promoting a to-do to an issue, importing a repo's open issues, and giving a held idea a repository of its own, which is created, pushed to, and left as a reference on the board
+- [ ] Link an idea to an existing repo from the phone — creating one works there, but pointing an idea at a repo somebody already has needs the same opt-in the server asks for before it writes an IDEA.md into it

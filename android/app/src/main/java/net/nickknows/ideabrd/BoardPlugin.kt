@@ -15,6 +15,7 @@ import net.nickknows.ideabrd.core.ParsedIdeaFile
 import net.nickknows.ideabrd.core.ParsedTodo
 import net.nickknows.ideabrd.core.applyIssues
 import net.nickknows.ideabrd.core.issueEdits
+import net.nickknows.ideabrd.core.mergeImportedIssues
 import org.eclipse.jgit.lib.PersonIdent
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider
 
@@ -249,10 +250,8 @@ class BoardPlugin : Plugin() {
         background(call) {
             val tile = store.readIdea(slug)
                 ?: throw IllegalArgumentException("No idea called $slug on this board")
-            val repo = tile.file.repo
-            val linked = repo?.let { linkedRepo(it) }
-            val store2 = linked?.takeIf { it.cloned }?.let { LinkedRepoStore(it.dir) }
-            val current = store2?.read() ?: tile.file
+            val linked = checkout(tile)
+            val current = linked?.store?.read() ?: tile.file
 
             val submitted = call.getArray("todos", null)?.let { array ->
                 (0 until array.length()).map { i ->
@@ -275,20 +274,20 @@ class BoardPlugin : Plugin() {
                 progress = call.getInt("progress") ?: current.progress,
                 color = call.getString("color") ?: tile.file.color,
                 rank = tile.file.rank,
-                repo = repo,
+                repo = tile.file.repo,
                 todos = submitted ?: current.todos,
             )
 
-            if (store2 != null && repo != null) {
-                store2.write(updated)
-                linked.commitAll("Update idea: ${updated.title}", author())
+            if (linked != null) {
+                linked.store.write(updated)
+                linked.git.commitAll("Update idea: ${updated.title}", author())
                 // The colour is the board's to keep, so a change to it still
                 // rewrites the board's own file.
                 if (updated.color != tile.file.color) {
                     store.writeIdea(slug, tile.file.copy(color = updated.color))
                     boardRepo()?.commitAll("Recolour tile: ${updated.title}", author())
                 }
-                mirrorIssues(repo, current.todos, updated.todos)
+                mirrorIssues(linked.repo, current.todos, updated.todos)
             } else {
                 store.writeIdea(slug, updated)
                 boardRepo()?.commitAll("Update idea: ${updated.title}", author())
@@ -296,6 +295,18 @@ class BoardPlugin : Plugin() {
             tileJson(store.readIdea(slug)!!, withTodos = true)
         }
     }
+
+    /** An idea's own repository, once this device has a checkout of it. */
+    private data class Checkout(
+        val repo: String,
+        val git: GitRepo,
+        val store: LinkedRepoStore,
+    )
+
+    private fun checkout(tile: BoardStore.Tile): Checkout? =
+        tile.file.repo?.let { repo ->
+            linkedRepo(repo).takeIf { it.cloned }?.let { Checkout(repo, it, LinkedRepoStore(it.dir)) }
+        }
 
     /**
      * Push a ticked box or a retitled item back to the issue that owns it.
@@ -385,6 +396,149 @@ class BoardPlugin : Plugin() {
             if (!linked.cloned) linked.clone(credentials) else linked.sync(credentials, author())
             refreshIssues(repo)
             tileJson(store.readIdea(slug)!!, withTodos = true)
+        }
+    }
+
+    // ---- the GitHub side ------------------------------------------------
+    //
+    // Three actions that have to create something on GitHub before the board
+    // can point at it. Each is an explicit request, and each reports its
+    // failure rather than swallowing it the way a background refresh does: an
+    // action that silently did nothing is worse than an error.
+
+    /**
+     * Open an issue for a to-do and bind the two together.
+     *
+     * From then on the issue owns that item's text and whether it is done, and
+     * the file just carries the reference. That is what gives the item a stable
+     * identity: plain to-dos are matched between file and board by exact text,
+     * so rewording one replaces it, where a promoted one can be reworded
+     * freely.
+     */
+    @PluginMethod
+    fun promoteTodo(call: PluginCall) {
+        val slug = call.getString("slug") ?: return call.reject("slug is required")
+        val index = call.getInt("index") ?: return call.reject("index is required")
+        background(call) {
+            val token = token() ?: throw IllegalStateException("Sign in to GitHub first")
+            val (tile, content, writer) = editable(slug)
+            val repo = tile.file.repo
+                ?: throw IllegalStateException("This idea has no repository to open an issue in")
+            val todo = content.todos.getOrNull(index)
+                ?: throw IllegalArgumentException("No to-do at position $index")
+            if (todo.issue != null) return@background tileJson(tile, withTodos = true)
+
+            val issue = GitHubApi.createIssue(
+                repo,
+                todo.text,
+                "Tracked on the IdeaBRD board under **${content.title ?: slug}**.",
+                token,
+            ) ?: throw IllegalStateException("GitHub refused to open the issue")
+
+            val todos = content.todos.toMutableList()
+            todos[index] = todo.copy(issue = issue.number)
+            writer(content.copy(todos = todos), "Link todo to issue #${issue.number}")
+            issues.save(repo, issues.load(repo).values + issue)
+            tileJson(store.readIdea(slug)!!, withTodos = true)
+        }
+    }
+
+    /** Adopt the repo's issues as to-dos — the direction the board never had. */
+    @PluginMethod
+    fun importIssues(call: PluginCall) {
+        val slug = call.getString("slug") ?: return call.reject("slug is required")
+        background(call) {
+            val token = token() ?: throw IllegalStateException("Sign in to GitHub first")
+            val (tile, content, writer) = editable(slug)
+            val repo = tile.file.repo
+                ?: throw IllegalStateException("This idea has no repository to import from")
+            val found = GitHubApi.listIssues(repo, token)
+            if (found.isNotEmpty()) issues.save(repo, found.values)
+            // Closed issues are a repo's history; a board is for what is still
+            // in flight, so only open ones are adopted.
+            val merged = mergeImportedIssues(content.todos, found.values.filter { !it.closed })
+            val added = merged.size - content.todos.size
+            if (added > 0) writer(content.copy(todos = merged), "Import $added issue(s) as to-dos")
+            JSObject()
+                .put("imported", added)
+                .put("idea", tileJson(store.readIdea(slug)!!, withTodos = true))
+        }
+    }
+
+    /**
+     * Give a note-only idea a repository of its own, and move it in.
+     *
+     * An idea held on a board has nowhere for anyone else to link: a board is
+     * one person's, and a directory in it is not something a second person can
+     * be given access to. Its own repository is what sharing means — so this
+     * creates one, pushes the idea into it, and leaves the board holding a
+     * reference to where it now lives.
+     */
+    @PluginMethod
+    fun createRepoForIdea(call: PluginCall) {
+        val slug = call.getString("slug") ?: return call.reject("slug is required")
+        val name = call.getString("name") ?: return call.reject("name is required")
+        background(call) {
+            val token = token() ?: throw IllegalStateException("Sign in to GitHub first")
+            val credentials = credentials()!!
+            val tile = store.readIdea(slug)
+                ?: throw IllegalArgumentException("No idea called $slug on this board")
+            if (tile.file.repo != null) {
+                throw IllegalStateException("This idea already lives in ${tile.file.repo}")
+            }
+            val full = GitHubApi.createRepo(
+                name,
+                call.getString("org"),
+                call.getBoolean("private", true) ?: true,
+                tile.file.title ?: name,
+                token,
+            ) ?: throw IllegalStateException("GitHub refused to create $name")
+
+            // The idea moves in: its own repo gets the content, and the board
+            // keeps only where it is. Push before rewriting the board, so a
+            // failure leaves the board pointing at nothing rather than pointing
+            // at a repo that hasn't got the idea.
+            val linked = linkedRepo(full)
+            linked.clone(credentials)
+            LinkedRepoStore(linked.dir).write(tile.file)
+            linked.commitAll("Track idea in IDEA.md", author())
+            linked.sync(credentials, author())
+
+            store.writeIdea(slug, tile.file.copy(repo = full))
+            boardRepo()?.commitAll("Move idea into ${full}", author())
+            refreshIssues(full)
+            tileJson(store.readIdea(slug)!!, withTodos = true)
+        }
+    }
+
+    /**
+     * Where an idea's content is, and how to write it back.
+     *
+     * An idea with a repository of its own is edited there; one held on the
+     * board is edited in the board. Both callers below need the same three
+     * things, and getting the destination wrong would create the second copy
+     * the reference layout exists to avoid.
+     */
+    private fun editable(
+        slug: String,
+    ): Triple<BoardStore.Tile, ParsedIdeaFile, (ParsedIdeaFile, String) -> Unit> {
+        val tile = store.readIdea(slug)
+            ?: throw IllegalArgumentException("No idea called $slug on this board")
+        val linked = checkout(tile)
+        if (linked != null) {
+            val content = linked.store.read()
+                ?: throw IllegalStateException("${linked.repo} has no IDEA.md yet")
+            return Triple(tile, content) { updated, message ->
+                linked.store.write(updated)
+                linked.git.commitAll(message, author())
+            }
+        }
+        if (tile.file.repo != null) {
+            throw IllegalStateException("Fetch ${tile.file.repo} before editing this idea")
+        }
+        return Triple(tile, tile.file) { updated, message ->
+            store.writeIdea(slug, updated)
+            boardRepo()?.commitAll(message, author())
         }
     }
 

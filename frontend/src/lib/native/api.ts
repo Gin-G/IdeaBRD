@@ -1,8 +1,10 @@
 import type {
 	Board,
+	BoardOwners,
 	Idea,
 	IdeaSummary,
 	Identity,
+	ImportedIssues,
 	Providers,
 	PublishResult,
 	Status,
@@ -280,6 +282,42 @@ export const nativeApi = {
 		);
 	},
 
+	/** Open an issue for a to-do. The click is the opt-in, as on the server. */
+	promoteTodo: async (id: number): Promise<Todo> => {
+		const at = todoLocations.get(id);
+		if (!at) throw new Error('That to-do is no longer on this board');
+		const todos = toTodos(await BoardPlugin.promoteTodo({ slug: at.slug, index: at.index }));
+		return todos[at.index];
+	},
+
+	importIssues: async (ideaId: number): Promise<ImportedIssues> => {
+		const slug = await slugFor(ideaId);
+		const result = await BoardPlugin.importIssues({ slug });
+		return { imported: result.imported, todos: toTodos(result.idea) };
+	},
+
+	boardOwners: async (): Promise<BoardOwners> => {
+		const found = await Auth.owners();
+		// A short list means the token predates the read:org scope, not that
+		// the account has no organisations.
+		return { owners: found.owners, orgs_visible: found.owners.length > 1 };
+	},
+
+	giveIdeaRepo: async (
+		ideaId: number,
+		name: string,
+		org: string | null,
+		isPrivate: boolean
+	): Promise<Idea> =>
+		toIdea(
+			await BoardPlugin.createRepoForIdea({
+				slug: await slugFor(ideaId),
+				name,
+				org,
+				private: isPrivate
+			})
+		),
+
 	/** Fetch the repository an idea lives in — the tile is a pointer until then. */
 	syncIdea: async (id: number): Promise<Idea> =>
 		toIdea(await BoardPlugin.fetchLinked({ slug: await slugFor(id) })),
@@ -337,14 +375,10 @@ export const nativeApi = {
 	},
 
 	// Server features with no meaning on a git-only board.
-	promoteTodo: unavailable,
-	importIssues: unavailable,
 	github: unavailable,
 	pulls: unavailable,
-	giveIdeaRepo: unavailable,
 	uploadLogo: unavailable,
 	deleteLogo: unavailable,
-	boardOwners: unavailable,
 	initBoard: unavailable,
 	reconcileBoard: unavailable,
 	listCollaborators: unavailable,

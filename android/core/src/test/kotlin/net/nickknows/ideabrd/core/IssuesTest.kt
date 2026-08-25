@@ -64,6 +64,23 @@ class IssuesTest {
     }
 
     @Test
+    fun `importing adds an item per issue, oldest first`() {
+        val merged = mergeImportedIssues(
+            listOf(ParsedTodo("already here", false)),
+            listOf(issue(9, "Newer"), issue(7, "Older", "closed")),
+        )
+        assertEquals(listOf("already here", "Older", "Newer"), merged.map { it.text })
+        assertEquals(listOf(null, 7, 9), merged.map { it.issue })
+        assertTrue(merged[1].done)
+    }
+
+    @Test
+    fun `importing twice adds nothing`() {
+        val once = mergeImportedIssues(emptyList(), listOf(issue(3, "One")))
+        assertEquals(once, mergeImportedIssues(once, listOf(issue(3, "One"))))
+    }
+
+    @Test
     fun `reordering alone is not an issue edit`() {
         val a = ParsedTodo("one", false, 1)
         val b = ParsedTodo("two", false, 2)

@@ -146,20 +146,83 @@ object GitHubApi {
             .put("title", title)
             .put("state", if (closed) "closed" else "open")
             .toString()
-        val connection = URL("$API/repos/$repo/issues/$number").openConnection() as HttpURLConnection
+        // Android's HttpURLConnection is OkHttp underneath and accepts PATCH,
+        // unlike the JDK's, which validates against a fixed list of methods.
+        return send("$API/repos/$repo/issues/$number", "PATCH", body, token) != null
+    }
+
+    /**
+     * Open an issue and return it, or null if GitHub refused.
+     *
+     * The click is the opt-in: nothing reaches the repository until someone
+     * asks for it here, so unlike the idea file there is no separate gate.
+     */
+    fun createIssue(repo: String, title: String, body: String, token: String): IssueInfo? {
+        val response = send(
+            "$API/repos/$repo/issues",
+            "POST",
+            JSONObject().put("title", title).put("body", body).toString(),
+            token,
+        ) ?: return null
+        val item = JSONObject(response)
+        return IssueInfo(
+            number = item.getInt("number"),
+            title = item.optString("title"),
+            state = item.optString("state", "open"),
+            htmlUrl = item.optString("html_url"),
+            comments = item.optInt("comments"),
+        )
+    }
+
+    /**
+     * Create a repository for an idea. Returns "owner/name".
+     *
+     * Initialised on creation, because GitHub rejects every git data write to a
+     * repo with no commits at all — and a clone of an empty repository has no
+     * branch to commit onto. Letting GitHub make the first commit is what the
+     * web UI does, and it leaves the idea's own first commit on top of it.
+     */
+    fun createRepo(
+        name: String,
+        org: String?,
+        private: Boolean,
+        description: String,
+        token: String,
+    ): String? {
+        val path = if (org.isNullOrEmpty()) "$API/user/repos" else "$API/orgs/$org/repos"
+        val body = JSONObject()
+            .put("name", name)
+            .put("private", private)
+            .put("auto_init", true)
+            .put("description", description)
+            .toString()
+        val response = send(path, "POST", body, token) ?: return null
+        return JSONObject(response).optString("full_name").ifEmpty { null }
+    }
+
+    /** Organisations the token can see. Empty without the read:org scope. */
+    fun orgs(token: String): List<String> {
+        val body = get("$API/user/orgs?per_page=100", token) ?: return emptyList()
+        val array = JSONArray(body)
+        return (0 until array.length()).map { array.getJSONObject(it).optString("login") }
+            .filter { it.isNotEmpty() }
+    }
+
+    /** A write with a JSON body. Returns the response, or null if it failed. */
+    private fun send(url: String, method: String, body: String, token: String): String? {
+        val connection = URL(url).openConnection() as HttpURLConnection
         return try {
-            // Android's HttpURLConnection is OkHttp underneath and accepts
-            // PATCH, unlike the JDK's, which validates against a fixed list.
-            connection.requestMethod = "PATCH"
+            connection.requestMethod = method
             connection.setRequestProperty("Content-Type", "application/json")
             connection.setRequestProperty("Accept", "application/vnd.github+json")
             connection.setRequestProperty("Authorization", "Bearer $token")
             connection.setRequestProperty("User-Agent", "IdeaBRD-Android")
             connection.doOutput = true
             connection.outputStream.use { it.write(body.toByteArray()) }
-            connection.responseCode in 200..299
+            if (connection.responseCode !in 200..299) return null
+            connection.inputStream.bufferedReader().use { it.readText() }
         } catch (_: Exception) {
-            false
+            null
         } finally {
             connection.disconnect()
         }

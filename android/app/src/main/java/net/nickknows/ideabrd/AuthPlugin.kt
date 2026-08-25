@@ -1,5 +1,6 @@
 package net.nickknows.ideabrd
 
+import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
@@ -120,6 +121,36 @@ class AuthPlugin : Plugin() {
                 call.reject(e.message ?: "Sign-in failed", e)
             } finally {
                 polling = false
+            }
+        }
+    }
+
+    /**
+     * Where a new repository could be created: the signed-in account, plus any
+     * organisation the token can see.
+     *
+     * The organisation list is empty without the `read:org` scope, which a
+     * token minted before the app asked for it will not have — so the account
+     * is always first and always present, and a shorter list means "reconnect",
+     * not "you have no organisations".
+     */
+    @PluginMethod
+    fun owners(call: PluginCall) {
+        val context = context ?: return call.reject("No context")
+        val token = TokenStore.token(context) ?: return call.reject("Sign in to GitHub first")
+        work.execute {
+            try {
+                val login = TokenStore.login(context) ?: GitHubApi.login(token)
+                val owners = JSArray()
+                if (login != null) {
+                    owners.put(JSObject().put("login", login).put("kind", "user"))
+                }
+                GitHubApi.orgs(token).forEach {
+                    owners.put(JSObject().put("login", it).put("kind", "org"))
+                }
+                call.resolve(JSObject().put("owners", owners))
+            } catch (e: Exception) {
+                call.reject(e.message ?: "Could not reach GitHub", e)
             }
         }
     }

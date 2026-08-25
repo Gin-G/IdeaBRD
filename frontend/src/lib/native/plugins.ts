@@ -25,6 +25,8 @@ export interface AuthStatus {
 
 export interface AuthPlugin {
 	status(): Promise<AuthStatus>;
+	/** Accounts a repository could be created under: the user, plus their orgs. */
+	owners(): Promise<{ owners: { login: string; kind: 'user' | 'org' }[] }>;
 	/** Ask GitHub for a code for the person to type. Nothing is authorised yet. */
 	start(options?: { clientId?: string }): Promise<DeviceCode>;
 	/** Resolves once they have authorised it; the token stays on the native side. */
@@ -94,6 +96,17 @@ export interface BoardPlugin {
 	sync(): Promise<{ merged: string[]; unsynced: number }>;
 	/** Clone or pull the repository an idea lives in, and refresh its issues. */
 	fetchLinked(options: { slug: string }): Promise<NativeTile>;
+	/** Open an issue for one to-do; the issue then owns its text and state. */
+	promoteTodo(options: { slug: string; index: number }): Promise<NativeTile>;
+	/** Adopt the repo's open issues as to-dos. */
+	importIssues(options: { slug: string }): Promise<{ imported: number; idea: NativeTile }>;
+	/** Create a repository for a held idea and move the idea into it. */
+	createRepoForIdea(options: {
+		slug: string;
+		name: string;
+		org?: string | null;
+		private?: boolean;
+	}): Promise<NativeTile>;
 }
 
 export const Auth = registerPlugin<AuthPlugin>('Auth');
