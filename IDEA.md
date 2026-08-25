@@ -1,6 +1,6 @@
 ---
 status: active
-progress: 85
+progress: 88
 ---
 
 # IdeaBRD
@@ -106,4 +106,4 @@ authoritative until reconciliation says the git copy has earned the swap.
 - [x] Read a repo-linked idea on the phone — the board repo records only where such an idea lives, so a linked tile was a link and an empty page; the app now clones that repository on request and reads and writes its own IDEA.md
 - [x] Show issue-backed to-dos properly on the phone — issues are fetched and cached for offline, the item they back takes its title and state from them, and ticking a box closes the issue
 - [x] Do the GitHub-side actions from the phone — promoting a to-do to an issue, importing a repo's open issues, and giving a held idea a repository of its own, which is created, pushed to, and left as a reference on the board
-- [ ] Link an idea to an existing repo from the phone — creating one works there, but pointing an idea at a repo somebody already has needs the same opt-in the server asks for before it writes an IDEA.md into it
+- [x] Link an idea to an existing repo from the phone, with the same opt-in the server asks for — a repo that already has an IDEA.md is adopted, and one that hasn't is left untouched until a second, explicit yes

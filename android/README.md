@@ -108,8 +108,10 @@ title and whether it is closed come from GitHub rather than from the file, and
 ticking the box here closes the issue. Between fetches the last known state is
 served from a cache kept outside the checkout, so a board still opens on a
 train. Promoting a to-do to an issue and importing a repo's open issues both
-work here too, and a held idea can be given a repository of its own — the app
-creates it, pushes the idea into it, and leaves the board holding a reference.
+work here too, and a held idea can be given a repository — a new one the app
+creates, or one you already have. Linking a repo that has no `IDEA.md` means
+writing one into it, so that takes a second, explicit yes; nothing is committed
+before it.
 
 ## Syncing
 
@@ -132,11 +134,6 @@ rest of somebody's repository would be worse than saying so.
 
 - **Logos.** The app finds an `idea_logo.*` beside an idea but does not display
   or replace it.
-- **Linking an idea to a repository that already exists.** Creating one for an
-  idea works here; pointing an idea at a repo somebody already has does not,
-  because that repo may have no `IDEA.md` and seeding somebody's repository
-  unprompted is the thing the opt-in gate exists to prevent. The repo field in
-  the edit dialog is hidden here for that reason.
 - **Live repo data.** Stars, forks and open pull requests are API reads the
   server does; the device shows the repository and its issues, not its
   statistics.

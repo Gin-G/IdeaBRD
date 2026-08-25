@@ -107,6 +107,17 @@ export interface BoardPlugin {
 		org?: string | null;
 		private?: boolean;
 	}): Promise<NativeTile>;
+	/**
+	 * Point a held idea at a repository that already exists.
+	 *
+	 * Answers `needsSeed` and changes nothing when that repo has no IDEA.md:
+	 * writing one into somebody's repository is never done unprompted.
+	 */
+	linkRepo(options: {
+		slug: string;
+		repo: string;
+		seed?: boolean;
+	}): Promise<{ needsSeed: boolean; repo?: string; idea?: NativeTile }>;
 }
 
 export const Auth = registerPlugin<AuthPlugin>('Auth');

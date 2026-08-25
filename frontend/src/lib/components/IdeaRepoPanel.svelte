@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { api, connectGithub, ApiError } from '$lib/api';
+	import { isNative } from '$lib/native/plugins';
+	import { nativeApi } from '$lib/native/api';
 	import type { BoardOwner, Idea } from '$lib/types';
 
 	let {
@@ -8,6 +10,15 @@
 	}: { idea: Idea; oncreated: (updated: Idea) => void } = $props();
 
 	let open = $state(false);
+	// Pointing an idea at a repo that already exists is the device's own path:
+	// in the browser the same thing is the repo field in the edit dialog, where
+	// the server handles the opt-in.
+	const canLinkExisting = isNative();
+	let mode = $state<'create' | 'link'>('create');
+	let existing = $state('');
+	// Set when the named repo has no IDEA.md, so linking would mean writing one
+	// into it. Nothing has been changed at that point.
+	let confirmSeed = $state(false);
 	let owners = $state<BoardOwner[]>([]);
 	let owner = $state('');
 	let name = $state('');
@@ -42,6 +53,24 @@
 		}
 	}
 
+	async function link(seed = false) {
+		busy = true;
+		error = '';
+		try {
+			const result = await nativeApi.linkIdeaRepo(idea.id, existing.trim(), seed);
+			if (result.needsSeed) {
+				confirmSeed = true;
+			} else if (result.idea) {
+				oncreated(result.idea);
+				open = false;
+			}
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Could not link that repository';
+		} finally {
+			busy = false;
+		}
+	}
+
 	async function create() {
 		busy = true;
 		error = '';
@@ -72,6 +101,46 @@
 	{:else if !open}
 		<button class="btn-ghost mt-3 w-full justify-center" onclick={start}>Create a repository</button
 		>
+	{:else if mode === 'link'}
+		<div class="mt-3 space-y-3">
+			<label class="block text-sm">
+				<span class="mb-1 block text-xs text-slate-400">Repository</span>
+				<input
+					class="input w-full font-mono text-sm"
+					bind:value={existing}
+					placeholder="owner/name"
+					spellcheck="false"
+				/>
+			</label>
+			{#if confirmSeed}
+				<div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
+					That repository has no <span class="font-mono">IDEA.md</span>. Linking it means
+					committing one there from this idea. Nothing has been written yet.
+				</div>
+				<button
+					class="btn-primary w-full justify-center"
+					onclick={() => link(true)}
+					disabled={busy}
+				>
+					{busy ? 'Committing…' : 'Add IDEA.md and link'}
+				</button>
+			{:else}
+				<button
+					class="btn-primary w-full justify-center"
+					onclick={() => link()}
+					disabled={busy || !existing.trim()}
+				>
+					{busy ? 'Cloning…' : 'Link this repo'}
+				</button>
+			{/if}
+			<button
+				class="btn-ghost w-full justify-center"
+				onclick={() => {
+					mode = 'create';
+					confirmSeed = false;
+				}}>Create one instead</button
+			>
+		</div>
 	{:else}
 		<div class="mt-3 space-y-3">
 			{#if owners.length > 1}
@@ -109,6 +178,12 @@
 					{busy ? 'Creating…' : 'Create'}
 				</button>
 			</div>
+			{#if canLinkExisting}
+				<button
+					class="w-full text-xs text-slate-500 hover:text-slate-300"
+					onclick={() => (mode = 'link')}>Use a repository I already have</button
+				>
+			{/if}
 		</div>
 	{/if}
 

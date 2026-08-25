@@ -318,6 +318,24 @@ export const nativeApi = {
 			})
 		),
 
+	/**
+	 * Point a held idea at a repo that already exists.
+	 *
+	 * Returns `needsSeed` when that repo has no IDEA.md, having changed
+	 * nothing: seeding somebody's repository is a second, explicit yes.
+	 */
+	linkIdeaRepo: async (
+		ideaId: number,
+		repo: string,
+		seed = false
+	): Promise<{ needsSeed: boolean; idea: Idea | null }> => {
+		const result = await BoardPlugin.linkRepo({ slug: await slugFor(ideaId), repo, seed });
+		return {
+			needsSeed: result.needsSeed,
+			idea: result.idea ? toIdea(result.idea) : null
+		};
+	},
+
 	/** Fetch the repository an idea lives in — the tile is a pointer until then. */
 	syncIdea: async (id: number): Promise<Idea> =>
 		toIdea(await BoardPlugin.fetchLinked({ slug: await slugFor(id) })),

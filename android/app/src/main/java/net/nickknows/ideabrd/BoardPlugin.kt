@@ -9,6 +9,7 @@ import com.getcapacitor.annotation.CapacitorPlugin
 import java.io.File
 import java.util.concurrent.Executors
 import net.nickknows.ideabrd.core.BoardStore
+import net.nickknows.ideabrd.core.InvalidRepoRef
 import net.nickknows.ideabrd.core.IssueInfo
 import net.nickknows.ideabrd.core.LinkedRepoStore
 import net.nickknows.ideabrd.core.ParsedIdeaFile
@@ -16,6 +17,7 @@ import net.nickknows.ideabrd.core.ParsedTodo
 import net.nickknows.ideabrd.core.applyIssues
 import net.nickknows.ideabrd.core.issueEdits
 import net.nickknows.ideabrd.core.mergeImportedIssues
+import net.nickknows.ideabrd.core.normalizeRepo
 import org.eclipse.jgit.lib.PersonIdent
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider
 
@@ -508,6 +510,63 @@ class BoardPlugin : Plugin() {
             boardRepo()?.commitAll("Move idea into ${full}", author())
             refreshIssues(full)
             tileJson(store.readIdea(slug)!!, withTodos = true)
+        }
+    }
+
+    /**
+     * Point a held idea at a repository that already exists.
+     *
+     * Two cases, and the difference matters. If that repo already has an
+     * IDEA.md then it already holds an idea, and linking adopts it: the board
+     * keeps only where it is, and the repo's copy is the one that counts.
+     *
+     * If it has none, linking would mean *writing* one into somebody's
+     * repository, which is the one thing the app never does unprompted — so
+     * the first call changes nothing and answers `needsSeed`, and only a second
+     * call with `seed` set goes ahead. The board entry is rewritten last, after
+     * the idea is safely in the repo: the opposite order would leave the board
+     * pointing at a repository that hasn't got it.
+     */
+    @PluginMethod
+    fun linkRepo(call: PluginCall) {
+        val slug = call.getString("slug") ?: return call.reject("slug is required")
+        val requested = call.getString("repo") ?: return call.reject("repo is required")
+        val seed = call.getBoolean("seed", false) ?: false
+        background(call) {
+            val repo = try {
+                normalizeRepo(requested)
+            } catch (e: InvalidRepoRef) {
+                throw IllegalArgumentException("Not a repository: $requested")
+            }
+            val credentials = credentials()
+                ?: throw IllegalStateException("Sign in to GitHub first")
+            val tile = store.readIdea(slug)
+                ?: throw IllegalArgumentException("No idea called $slug on this board")
+            tile.file.repo?.let {
+                throw IllegalStateException("This idea already lives in $it")
+            }
+
+            val linked = linkedRepo(repo)
+            if (!linked.cloned) linked.clone(credentials)
+            val linkedStore = LinkedRepoStore(linked.dir)
+
+            if (!linkedStore.exists()) {
+                if (!seed) {
+                    return@background JSObject()
+                        .put("needsSeed", true)
+                        .put("repo", repo)
+                }
+                linkedStore.write(tile.file)
+                linked.commitAll("Track idea in IDEA.md", author())
+                linked.sync(credentials, author())
+            }
+
+            store.writeIdea(slug, tile.file.copy(repo = repo))
+            boardRepo()?.commitAll("Move idea into $repo", author())
+            refreshIssues(repo)
+            JSObject()
+                .put("needsSeed", false)
+                .put("idea", tileJson(store.readIdea(slug)!!, withTodos = true))
         }
     }
 
