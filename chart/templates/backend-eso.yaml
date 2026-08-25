@@ -39,6 +39,13 @@ spec:
       remoteRef:
         key: {{ .Values.backend.secretPath }}
         property: github_token
+    {{- if .Values.backend.webhooks }}
+    # Shared secret for the GitHub webhook receiver.
+    - secretKey: GITHUB_WEBHOOK_SECRET
+      remoteRef:
+        key: {{ .Values.backend.secretPath }}
+        property: webhook_secret
+    {{- end }}
     {{- if .Values.backend.githubOAuth }}
     # GitHub OAuth app (user login + per-user repo access). Requires client_id and
     # client_secret to exist in OpenBao at backend.githubSecretPath, else the whole

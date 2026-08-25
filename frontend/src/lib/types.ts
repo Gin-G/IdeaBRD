@@ -46,6 +46,25 @@ export interface Todo {
 	/** Issue backing this to-do, once promoted. While set, the issue owns its text and state. */
 	github_issue_number: number | null;
 	github_issue_url: string | null;
+	/** Mirrored from the issue, never written back. Null for a plain to-do. */
+	github_issue_labels: string[] | null;
+	github_issue_assignee: string | null;
+	github_issue_comments: number | null;
+}
+
+/** An open pull request on an idea's repo — where its collaboration happens. */
+export interface PullRequest {
+	number: number;
+	title: string;
+	html_url: string;
+	author: string | null;
+	draft: boolean;
+	updated_at: string | null;
+}
+
+export interface ImportedIssues {
+	imported: number;
+	todos: Todo[];
 }
 
 export interface IdeaSummary {
@@ -97,6 +116,8 @@ export interface Board {
 	board_branch: string | null;
 	board_commit_sha: string | null;
 	board_published_at: string | null;
+	/** How the background dual-write is getting on. */
+	sync: BoardSync | null;
 }
 
 export interface BoardOwner {
@@ -117,6 +138,38 @@ export interface PublishResult {
 	removed: string[];
 	/** The repo holds files but isn't a board yet; publishing needs opting in. */
 	needs_opt_in: boolean;
+	/** The repo has commits the app didn't make; publishing over them needs force. */
+	moved: boolean;
+	head_sha: string | null;
+	error: string | null;
+}
+
+/** State of the background dual-write for a board. */
+export interface BoardSync {
+	pending: boolean;
+	last_error: string | null;
+	last_commit_sha: string | null;
+}
+
+export type ReconcileState = 'same' | 'differs' | 'missing_in_repo' | 'missing_in_board';
+
+export interface ReconcileEntry {
+	slug: string;
+	title: string | null;
+	idea_id: number | null;
+	state: ReconcileState;
+	/** Field names that disagree, e.g. ["status", "todos"]. */
+	differences: string[];
+}
+
+/** The database and the repo, side by side — the evidence for trusting git. */
+export interface Reconcile {
+	repo: string | null;
+	branch: string | null;
+	commit_sha: string | null;
+	in_sync: boolean;
+	moved: boolean;
+	entries: ReconcileEntry[];
 	error: string | null;
 }
 

@@ -1,0 +1,79 @@
+# Checks the Android app on every change to it, or to the web app it ships.
+#
+# The suite that matters here is :core:test — the Kotlin port of the IDEA.md
+# parser, held byte-for-byte against the fixtures the Python renderer writes.
+# That is the thing a git-only client stands on: if the phone and the server
+# disagree about what a file says, the board changes when you change device.
+name: IdeaBRD Android Build
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - android/**
+      - frontend/**
+      - fixtures/**
+      - .github/workflows/android-build.yaml
+  pull_request:
+    paths:
+      - android/**
+      - frontend/**
+      - fixtures/**
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the code repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Make sure the SDK has what the build needs
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Run the shared-core tests
+        working-directory: android
+        run: ./gradlew :core:test
+
+      - name: Build the web app the shell loads
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+          npx cap copy android
+
+      - name: Build a debug APK
+        working-directory: android
+        run: ./gradlew :app:assembleDebug
+
+      - name: Keep the APK, so a change can be installed and tried
+        uses: actions/upload-artifact@v4
+        with:
+          name: ideabrd-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - name: Keep the test report when something fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-test-report
+          path: android/core/build/reports/tests/test

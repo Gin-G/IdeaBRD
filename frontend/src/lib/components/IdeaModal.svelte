@@ -1,20 +1,24 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { api, ApiError } from '$lib/api';
-	import { STATUSES, type Idea, type Status } from '$lib/types';
+	import { STATUSES, type Idea, type Status, type Todo } from '$lib/types';
 	import TileLogo from './TileLogo.svelte';
+	import TodoList from './TodoList.svelte';
 
 	let {
 		idea = null,
 		onsave,
 		oncancel,
-		onlogo
+		onlogo,
+		ontodos
 	}: {
 		idea?: Idea | null;
 		onsave: (data: Partial<Idea>) => void;
 		oncancel: () => void;
 		/** Uploads persist immediately (they need an id), so the parent is told directly. */
 		onlogo?: (idea: Idea) => void;
+		/** So does every to-do edit, for the same reason. */
+		ontodos?: (todos: Todo[]) => void;
 	} = $props();
 
 	const PALETTE = ['#6366f1', '#ec4899', '#f59e0b', '#10b981', '#06b6d4', '#ef4444', '#8b5cf6'];
@@ -31,6 +35,11 @@
 	let uploadError = $state('');
 
 	const uploaded = $derived(logo.startsWith('/api/'));
+
+	// The to-do list writes through to the API as it is edited, so it keeps its
+	// own copy rather than waiting for Save like the fields above it.
+	let todos = $state<Todo[]>(init?.todos ?? []);
+	$effect(() => ontodos?.(todos));
 
 	async function pickLogo(e: Event) {
 		const input = e.currentTarget as HTMLInputElement;
@@ -84,7 +93,7 @@
 	role="presentation"
 	onclick={(e) => e.target === e.currentTarget && oncancel()}
 >
-	<div class="card w-full max-w-lg p-6">
+	<div class="card max-h-[88vh] w-full max-w-lg overflow-y-auto p-6">
 		<h2 class="text-lg font-bold">{idea ? 'Edit idea' : 'New idea'}</h2>
 
 		<form class="mt-5 space-y-4" onsubmit={submit}>
@@ -171,6 +180,20 @@
 				>
 				<input id="repo" class="input" bind:value={repo} placeholder="owner/name" />
 			</div>
+
+			{#if idea}
+				<!-- The to-do list, here as well as on the full page: promoting an item
+				     to an issue was reachable from one screen only, which made it look
+				     like a feature of that page rather than of the idea. -->
+				<div class="border-t border-white/10 pt-4">
+					<TodoList
+						ideaId={idea.id}
+						bind:todos
+						canEdit={idea.role !== 'viewer'}
+						repo={idea.github_repo}
+					/>
+				</div>
+			{/if}
 
 			<div class="flex justify-end gap-2 pt-2">
 				<button type="button" class="btn-ghost" onclick={oncancel}>Cancel</button>

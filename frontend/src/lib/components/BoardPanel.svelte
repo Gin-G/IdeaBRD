@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api, connectGithub, ApiError } from '$lib/api';
-	import type { Board, BoardOwner, PublishResult } from '$lib/types';
+	import type { Board, BoardOwner, PublishResult, Reconcile } from '$lib/types';
 
 	let { onclose, oninit }: { onclose: () => void; oninit?: () => void } = $props();
 
@@ -15,6 +15,10 @@
 	// What a publish would change right now. Null while unknown.
 	let pending = $state<PublishResult | null>(null);
 	let checking = $state(false);
+	// The database and the repo side by side. Only fetched when asked for: it
+	// reads every idea that differs, which is not a thing to do on every open.
+	let diff = $state<Reconcile | null>(null);
+	let comparing = $state(false);
 
 	// Creation form. The board is private by default: it is someone's notes.
 	let name = $state('ideabrd-board');
@@ -91,14 +95,36 @@
 		}
 	}
 
-	async function publish(optIn = false) {
-		const done = await run(() => api.publishBoard(optIn));
+	async function publish(optIn = false, force = false) {
+		const done = await run(() => api.publishBoard(optIn, force));
 		if (done) {
 			result = done;
-			if (done.committed) board = await api.board();
+			if (done.committed) {
+				board = await api.board();
+				diff = null;
+			}
 			await checkPending();
 		}
 	}
+
+	/** Read both copies and list what disagrees. Changes nothing. */
+	async function compare() {
+		comparing = true;
+		try {
+			diff = await api.reconcileBoard();
+		} catch (e) {
+			error = e instanceof ApiError ? e.message : 'Could not compare the repo';
+		} finally {
+			comparing = false;
+		}
+	}
+
+	const STATE_LABELS: Record<string, string> = {
+		same: 'matches',
+		differs: 'differs',
+		missing_in_repo: 'not in the repo',
+		missing_in_board: 'only in the repo'
+	};
 
 	async function unlink() {
 		const cleared = await run(() => api.setBoardRepo(null));
@@ -113,10 +139,15 @@
 	const needsGithub = $derived(error.includes('GitHub account'));
 	const changed = $derived((result?.written.length ?? 0) + (result?.removed.length ?? 0));
 	const outstanding = $derived((pending?.written.length ?? 0) + (pending?.removed.length ?? 0));
-	// Publishing is manual while the database is the source of truth, so the
-	// board drifts from the repo as soon as it is edited. Say so, rather than
-	// offering a button with no hint whether pressing it does anything.
+	// Edits reach the repo on their own now, so "out of date" usually means a
+	// background publish is still in flight or has failed — worth saying either
+	// way, rather than offering a button with no hint whether it does anything.
 	const upToDate = $derived(pending !== null && outstanding === 0);
+	// Someone committed to the board repo directly. Publishing would rebuild
+	// every file the board owns from our copy, so it is refused until asked
+	// for again — with the difference in front of the person asking.
+	const moved = $derived(Boolean(pending?.moved || result?.moved));
+	const syncError = $derived(board?.sync?.last_error ?? '');
 </script>
 
 <div
@@ -133,8 +164,9 @@
 		</div>
 
 		<p class="mb-4 text-sm text-slate-400">
-			Your whole board, published to a git repo as files — one directory per idea. The board keeps
-			working from the database either way; this is a second copy you own.
+			Your whole board, kept in a git repo as files — one directory per idea. Every change is
+			written here in the background; the database is still the source of truth, and this is the
+			copy earning the right to replace it.
 		</p>
 
 		{#if loading}
@@ -179,20 +211,35 @@
 						Couldn't reach the repo
 					{/if}
 				</span>
-				<button
-					class="text-xs text-slate-500 hover:text-slate-300"
-					onclick={checkPending}
-					disabled={checking || busy}>Re-check</button
-				>
+				<div class="flex gap-3">
+					<button
+						class="text-xs text-slate-500 hover:text-slate-300"
+						onclick={compare}
+						disabled={comparing || busy}>{comparing ? 'Comparing…' : 'Compare'}</button
+					>
+					<button
+						class="text-xs text-slate-500 hover:text-slate-300"
+						onclick={checkPending}
+						disabled={checking || busy}>Re-check</button
+					>
+				</div>
 			</div>
+
+			{#if syncError}
+				<p class="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
+					{syncError}
+				</p>
+			{/if}
 
 			<button
 				class="btn-primary w-full"
-				onclick={() => publish()}
-				disabled={busy || checking || upToDate}
+				onclick={() => publish(false, moved)}
+				disabled={busy || checking || (upToDate && !moved)}
 			>
 				{#if busy}
 					Publishing…
+				{:else if moved}
+					Publish over the repo's own commits
 				{:else if upToDate}
 					Nothing to publish
 				{:else if pending}
@@ -204,9 +251,53 @@
 			</button>
 
 			<p class="mt-2 text-xs text-slate-500">
-				Publishing is manual for now — the board is edited in the app and copied here
-				when you ask.
+				Every edit is written here on its own; this button is for publishing straight away, or
+				after something went wrong.
 			</p>
+
+			{#if moved}
+				<div class="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
+					This repo has commits the app didn't make, so nothing is being written to it.
+					Publishing rebuilds every file the board owns from the app's copy — compare first,
+					and anything edited there by hand will be replaced.
+				</div>
+			{/if}
+
+			{#if diff}
+				<div class="mt-4 rounded-lg border border-white/10 bg-white/5 p-3">
+					<div class="mb-2 flex items-center justify-between">
+						<h3 class="text-sm font-semibold text-slate-200">Board vs repo</h3>
+						<button class="text-xs text-slate-500 hover:text-slate-300" onclick={() => (diff = null)}
+							>Hide</button
+						>
+					</div>
+					{#if diff.error}
+						<p class="text-xs text-rose-300">{diff.error}</p>
+					{:else if diff.in_sync}
+						<p class="text-xs text-emerald-300">
+							Every idea matches. The repo is a faithful copy of this board.
+						</p>
+					{:else}
+						<ul class="space-y-1.5">
+							{#each diff.entries as entry (entry.slug)}
+								<li class="flex items-baseline justify-between gap-3 text-xs">
+									<span class="min-w-0 flex-1 truncate text-slate-300">
+										{entry.title ?? entry.slug}
+										<span class="font-mono text-slate-600">{entry.slug}</span>
+									</span>
+									<span
+										class={entry.state === 'same' ? 'text-slate-600' : 'text-amber-300'}
+									>
+										{STATE_LABELS[entry.state] ?? entry.state}{#if entry.differences.length}&nbsp;({entry.differences.join(
+												', '
+											)}){/if}
+									</span>
+								</li>
+							{/each}
+						</ul>
+					{/if}
+				</div>
+			{/if}
 
 			{#if result?.needs_opt_in}
 				<div class="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm">

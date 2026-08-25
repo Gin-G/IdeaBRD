@@ -18,7 +18,9 @@ WebSocket. Built to run on Kubernetes.
 └──────────────────────────────────┘
 ```
 
-- **Frontend** — SvelteKit compiled to a static SPA (`adapter-static`), served by nginx.
+- **Frontend** — SvelteKit compiled to a static SPA (`adapter-static`), served by nginx — and
+  packaged as an **Android app** (`android/`), where the same pages read the board from a git
+  checkout instead of the API.
 - **Backend** — FastAPI, async SQLAlchemy + asyncpg, Alembic migrations. Google OIDC handled
   server-side with an httpOnly signed session cookie.
 - **Database** — CloudNativePG `Cluster` (in-cluster Postgres).
@@ -32,6 +34,9 @@ WebSocket. Built to run on Kubernetes.
 | `backend/`  | FastAPI app, models, routers, Alembic migrations, tests        |
 | `frontend/` | SvelteKit SPA (Tailwind), nginx Dockerfile                     |
 | `chart/`    | Helm chart (Deployments, Services, Ingress, Secret, CNPG, Job) |
+| `android/`  | The Android app: Capacitor shell, JGit plugin, shared Kotlin core |
+| `fixtures/` | Golden `IDEA.md` files both renderers are held to               |
+| `docs/`     | Decisions worth writing down                                    |
 | `docker-compose.yml` | Local dev stack                                        |
 
 ---
@@ -195,14 +200,17 @@ When neither Google nor GitHub is configured, a built-in **dev login** is used (
 
 ## Data model
 
-- **users** — email, name, avatar
+- **users** — email, name, avatar, and where their board is published
+  (`board_repo`, `board_branch`, `board_commit_sha`, `board_published_at`)
 - **identities** — (provider `google`/`github`, subject) → user; GitHub token for repo access
 - **ideas** — title, notes (markdown), status (`idea`/`active`/`paused`/`done`), progress,
   color, logo, optional `github_repo`, grid position, git sync state (`github_file_sha`,
-  `git_synced_at`, `github_logo_path`, `github_logo_sha`)
+  `git_synced_at`, `github_logo_path`, `github_logo_sha`), and its board-repo identity
+  (`slug`, `rank`)
 - **idea_logos** — uploaded/synced tile image bytes, one row per idea
 - **todos** — text, done, position (belong to an idea), optional backing GitHub issue
-  (`github_issue_number`, `github_issue_url`)
+  (`github_issue_number`, `github_issue_url`) and the context mirrored from it
+  (`github_issue_labels`, `github_issue_assignee`, `github_issue_comments`)
 - **idea_collaborators** — (idea, user, role `editor`/`viewer`, per-user board position)
 - **idea_invitations** — pending invites by email (claimed on first login)
 
@@ -258,7 +266,15 @@ Free-form markdown notes.
   panel prompts "Add IDEA.md to repo" (`POST /api/ideas/{id}/sync?init=true`), and app edits
   stay database-only until then.
 - Sync is best-effort: GitHub errors are reported in the tile (`git_sync_error`) and never
-  block the app. Push conflicts (stale sha) retry once against the current file.
+  block the app.
+- **Push conflicts merge rather than overwrite.** A stale sha means the file changed on GitHub
+  since we last read it. The two versions are merged *by meaning* (`app/ideamerge.py`): the
+  file we last synced is fetched by its blob sha as the common ancestor, both sides are parsed,
+  fields and to-dos are merged — to-dos matched the way `_apply_todos` matches them, by issue
+  number where there is one and exact text otherwise — and the result is both pushed and
+  written back to the board. Merging the text would not work: the app re-renders the whole
+  file, so a line diff sees a rewrite even when nothing changed. Git wins ties, except in
+  prose, where a region both sides rewrote keeps both.
 
 ### The file format (and how it bites)
 
@@ -305,15 +321,21 @@ Any to-do on a repo-linked idea can be **promoted to a GitHub issue** — hover 
 - **Deleting a to-do doesn't close its issue** — it only unbinds. Tidying a tile shouldn't
   reach into someone's issue tracker.
 
-Two deliberate limits:
+- **The tile shows the issue, not just the sentence.** Labels, the assignee and the comment
+  count are mirrored alongside the title and state, so an item on the board carries who has it
+  and what it is filed under. All three are read-only here — the board never writes them.
+- **Import goes the other way too.** *Import issues* on the to-do list adopts the repo's open
+  issues as issue-backed to-dos (`POST /api/ideas/{id}/todos/import`), so a repo that already
+  had a hundred issues doesn't arrive at an empty tile. Importing twice is a no-op.
 
-- The pull reads **one page of issues** (100, most recent first). A to-do pointing at an older
-  issue keeps the state it had rather than being reported wrong; app-side edits still reach the
-  right issue either way. A webhook would remove the polling entirely.
-- A pull that changes an issue-backed to-do **does not commit IDEA.md** — the file catches up on
-  the next app-side edit. Opening a tile isn't a user action worth a commit, and the rule that
-  IdeaBRD only writes to a repo when someone asks it to is worth more than a momentarily stale
-  checkbox.
+One deliberate limit: a pull that changes an issue-backed to-do **does not commit IDEA.md** —
+the file catches up on the next app-side edit. Opening a tile isn't a user action worth a
+commit, and the rule that IdeaBRD only writes to a repo when someone asks it to is worth more
+than a momentarily stale checkbox.
+
+The pull pages through issues (up to ten pages) rather than reading only the newest hundred,
+which used to pin a to-do bound to an old issue to whatever state it already had. Webhooks
+(below) remove most of the polling anyway.
 
 Promotion needs no `IDEA.md` opt-in: the click is the opt-in, since nothing reaches the repo
 until someone asks. It uses the same token chain as every other push (idea owner's, then the
@@ -338,6 +360,136 @@ The tile image is repo content too, stored at the repo root next to `IDEA.md` as
   git clears the tile on the next pull. A logo that git never had (uploaded while the repo was
   untracked) is left alone.
 
+## Webhooks (`/api/webhooks/github`)
+
+Everything above pulls, which means a box ticked on GitHub sits unnoticed until someone opens
+the tile. The webhook closes that gap: GitHub tells us, the change is written down, and it goes
+out over the WebSocket the app is already holding open.
+
+- **`issues` and `issue_comment`** update every to-do bound to that issue — on every board that
+  links the repo, since two people may each have a tile pointing at it. A *deleted* issue
+  unbinds its to-do rather than deleting it.
+- **`push`** re-pulls `IDEA.md` and the logo, but only when the push actually touched them and
+  only on the repo's default branch: a tile follows the branch it is read from, and adopting a
+  feature branch's `IDEA.md` would show work that isn't merged.
+- Everything else is acknowledged and dropped.
+
+The endpoint is public by necessity, so payloads are authenticated with GitHub's HMAC signature
+(`X-Hub-Signature-256`) against `GITHUB_WEBHOOK_SECRET`. **Without a secret configured the
+endpoint refuses every request** — an unsigned writer into other people's boards is not a thing
+to leave running because a value was forgotten. In the chart it is `backend.webhooks: true`
+plus `webhook_secret` at `backend.secretPath`.
+
+Point a repository webhook at `https://<fqdn>/api/webhooks/github`, content type
+`application/json`, subscribed to *Issues*, *Issue comments* and *Pushes*.
+
+---
+
+## The board repo
+
+A **board repo** holds the whole board as files — one directory per idea, no manifest:
+
+```
+.ideabrd                        format version marker
+ideas/<slug>/IDEA.md            the idea
+ideas/<slug>/idea_logo.png      its tile image, when it has one
+```
+
+There is deliberately no `board.yaml`. Order and colour live in each idea's own frontmatter
+(`rank`, `color`), so moving a tile rewrites one file instead of the one file every device
+shares. `rank` is a **fractional key** compared as text (`app/rank.py`): there is always room
+to name a key strictly between two others, so a drag is one write and two devices reordering
+different tiles don't conflict.
+
+An idea that has a repository of its own is written here as a **reference** — its rank, colour
+and a link — not a copy. Its notes and to-dos are tracked in that repo under its own history,
+and a second copy here could only ever drift from it.
+
+- **Set it up** from the *Board repo* panel: create a fresh repo (the app makes it, initialised,
+  and publishes into it as its first commit) or link an existing one.
+- **Dual-write.** Every mutation — an idea, a to-do, a logo, a reorder, a share — schedules a
+  publish in the background (`app/dualwrite.py`). Writes coalesce over a short debounce, so a
+  drag is one commit rather than a dozen; an unchanged board publishes nothing at all. Failures
+  are recorded and surfaced in the panel rather than swallowed. Postgres stays authoritative:
+  git is the copy earning its trust. Set `BOARD_DUAL_WRITE=false` to turn it off.
+- **It refuses to publish over commits it didn't make.** A publish builds a tree on the current
+  head, so a direct edit to a file the board owns would be silently reverted. If the branch has
+  moved since our last publish, nothing is written and the panel offers *Publish over the
+  repo's own commits* — with a *Compare* first.
+- **Reconcile** (`GET /api/board/reconcile`) lists every idea from both sides and names the
+  fields that disagree (`status`, `todos`, `logo`…). Read-only: it is the evidence for cutting
+  over to git, not the cutover. It costs no requests for ideas that match, because the desired
+  file's git blob sha is computed locally and compared against the sha the tree listing already
+  carries.
+
+The repo's README is written by the app and explains the layout to whoever opens it — but only
+when there is no README, or the one there carries our sentinel, or it is still the stub GitHub
+left on creation. Anything else is somebody's own README and is left where it is.
+
+---
+
+## Android
+
+`android/` packages the same SvelteKit front end as an Android app with Capacitor, and points
+it at a **git checkout instead of the API**. There is no server involved once it is set up.
+
+- **The format is ported, not reimplemented.** `android/core` is plain Kotlin — `IdeaFile.kt`,
+  `Rank.kt`, `BoardRepo.kt`, `IdeaMerge.kt` — a port of the Python modules of the same names.
+  Both renderers are asserted against the golden files in `fixtures/idea-files/`, so a
+  divergence fails a build rather than showing up as a board that changes when you change
+  device.
+- **Sign-in is GitHub's device flow.** An app distributed to people cannot keep a client
+  secret, so it shows a short code to type at `github.com/login/device`. The token is stored
+  encrypted under an Android Keystore key and never crosses back over the bridge.
+- **Sync is fetch, merge, push**, with conflicts in an `IDEA.md` resolved by the same semantic
+  merge the server uses. A conflict in anything else is reported, not guessed at.
+- **Released by GitHub Actions.** `git tag v0.2.0 && git push origin v0.2.0` builds, signs and
+  attaches an APK to a GitHub Release (`.github/workflows/android-release.yaml`).
+
+See [`android/README.md`](android/README.md) for how to build it and what it doesn't do yet.
+
+---
+
+## Backups
+
+The CNPG cluster runs a single instance with no replica, so its volume is the only copy of
+anything not yet published to git.
+
+- **A nightly `pg_dump`** to a dedicated PVC (`db.backup`, on by default): a CronJob writes
+  `ideabrd-<timestamp>.dump` and prunes anything older than `keepDays`. Deliberately
+  self-contained — no cloud account, no extra credentials — and restorable with `pg_restore`
+  anywhere, including a laptop, which is where a restore usually has to happen when the cluster
+  is the thing that broke. The dump is written under a `.partial` name and renamed on success,
+  so an interrupted run never leaves a truncated file that looks like a backup. The PVC is
+  annotated `helm.sh/resource-policy: keep`.
+- **Continuous WAL archiving** to S3-compatible storage for point-in-time recovery
+  (`db.backup.objectStore`, off by default): set `destinationPath`, and put
+  `access_key_id` / `secret_access_key` in OpenBao at `db.backup.objectStore.secretPath`.
+
+```bash
+# restore the latest dump into a scratch database
+kubectl -n ideabrd exec -it deploy/ideabrd-backend -- sh -c 'ls -la /backups' # via a debug pod
+pg_restore --clean --if-exists -d "$DATABASE_URL" ideabrd-20260824T020000Z.dump
+```
+
+---
+
+## Tests
+
+```bash
+cd backend && pytest              # the API, git sync, publishing, merging, webhooks
+cd android && ./gradlew :core:test  # the Kotlin port, against the shared fixtures
+cd frontend && npm run check      # types
+```
+
+The backend suite mocks GitHub with `respx`, which means it agrees with whatever the code
+believes about the API. That is how the publisher shipped green and could not make its first
+commit — GitHub rejects every git data write to a repo with no commits, and no mock had ever
+said so. `backend/tests/live/` talks to the real API instead: it creates a throwaway repo,
+publishes a board into it, reads it back through a different endpoint than it was written with,
+and deletes the repo. It is skipped unless `IDEABRD_GITHUB_TOKEN` is set, and runs weekly in
+CI (`.github/workflows/github-live-test.yaml`).
+
 ---
 
 ## Verifying a deployment
@@ -357,13 +509,17 @@ GitHub panel shows live stars/issues/last-push.
 
 ## Roadmap / deferred
 
-- Backups for the Postgres cluster (it runs a single CNPG instance, no replica).
-- Richer issue data on the tile (labels, assignee, comment count), and importing a repo's
-  existing issues as to-dos rather than only pushing new ones.
-- A `/api/webhooks/github` endpoint so an issue closed on GitHub pushes to the tile over the
-  existing WebSocket, instead of the state being picked up on the next tile open.
-- GitHub **Projects v2**. Deferred on cost, not value: it's GraphQL-only (none of
-  `app/github.py` is reusable), it needs the `project` scope added to `github_scope` — which
-  every existing GitHub identity would have to re-authorize for, since OAuth tokens don't gain
-  scopes — and projects are user/org-owned rather than repo-owned, so an idea would need its own
-  project id and a per-project mapping of its Status field's option ids.
+The board's own to-do list is [`IDEA.md`](IDEA.md) — it is the tracker, and it is what the tile
+for this project shows. The larger threads:
+
+- **Cutting over to git.** The database is still authoritative; the repo is dual-written and
+  reconcilable, which is what the cutover decision is waiting on. Retiring Postgres also retires
+  the chart, the cluster and the collaborator tables — at which point collaboration is git's:
+  two people who both link an idea's repo work there by branch and pull request.
+- **Collaboration through repo permissions** rather than `idea_collaborators`, once the above
+  lands.
+- **The Android app on real hardware.** CI builds and packages it and the shared core is well
+  covered, but JGit's behaviour on a device — large clones, storage, background limits — has not
+  been exercised on one.
+- **GitHub Projects v2**: decided against, for reasons worth not rediscovering. See
+  [`docs/github-projects-v2.md`](docs/github-projects-v2.md).

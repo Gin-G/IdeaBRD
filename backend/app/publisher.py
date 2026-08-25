@@ -93,6 +93,10 @@ class PublishResult:
     written: list[str] = field(default_factory=list)
     removed: list[str] = field(default_factory=list)
     needs_opt_in: bool = False
+    # The branch is not where our last publish left it: somebody committed to
+    # the board repo directly. Nothing was written.
+    moved: bool = False
+    head_sha: str | None = None
     error: str | None = None
 
 
@@ -306,6 +310,7 @@ async def publish_board(
     *,
     opt_in: bool = False,
     dry_run: bool = False,
+    force: bool = False,
     client=None,
 ) -> PublishResult:
     """Write the user's board to their board repo as one commit.
@@ -314,6 +319,13 @@ async def publish_board(
     just names what a publish would change. That is what lets the app say
     whether the repo is behind, instead of offering a button that gives no hint
     whether pressing it does anything.
+
+    A publish refuses when the branch has moved since our last one, because a
+    tree built on that commit would carry our version of every file the board
+    owns — quietly reverting whatever was committed there. ``force`` publishes
+    anyway, and is what the app offers once someone has seen the difference
+    (see app.reconcile). ``update_ref`` is still never forced: this guards the
+    *content*, that guards the *branch*.
 
     Best-effort in the same spirit as app.gitsync: a GitHub failure comes back
     as a message rather than an exception, since the board itself is fine.
@@ -344,6 +356,10 @@ async def publish_board(
         if current and MARKER_FILE not in current and not opt_in:
             return PublishResult(needs_opt_in=True)
 
+        moved = bool(user.board_commit_sha) and head != user.board_commit_sha
+        if moved and not force and not dry_run:
+            return PublishResult(moved=True, head_sha=head)
+
         tiles = assign_identity(await load_board(session, user))
         desired = await build_tree(session, tiles)
         readme = render_readme(login, repo)
@@ -355,7 +371,11 @@ async def publish_board(
 
         if dry_run:
             return PublishResult(
-                committed=False, written=sorted(writes), removed=removals
+                committed=False,
+                written=sorted(writes),
+                removed=removals,
+                moved=moved,
+                head_sha=head,
             )
 
         # Identity is persisted whether or not anything is committed: a slug
@@ -367,7 +387,12 @@ async def publish_board(
         await session.commit()
 
         if not writes and not removals:
-            return PublishResult(committed=False)
+            # Nothing to write, but the branch is still where it is: record it
+            # so a publish that changed nothing also stops reporting a move.
+            if head != user.board_commit_sha:
+                user.board_commit_sha = head
+                await session.commit()
+            return PublishResult(committed=False, head_sha=head)
 
         entries = [
             {
@@ -398,6 +423,7 @@ async def publish_board(
     return PublishResult(
         committed=True,
         commit_sha=commit,
+        head_sha=commit,
         written=sorted(writes),
         removed=removals,
     )

@@ -29,11 +29,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.github import (
     GitHubError,
+    Issue,
     create_issue,
     delete_file,
     get_blob,
@@ -43,7 +44,13 @@ from app.github import (
     put_file,
     update_issue,
 )
-from app.ideafile import ParsedTodo, parse_idea_file, render_idea_file
+from app.ideafile import (
+    ParsedIdeaFile,
+    ParsedTodo,
+    parse_idea_file,
+    render_idea_file,
+)
+from app.ideamerge import merge_idea_files
 from app.logos import (
     LOGO_NAMES,
     MAX_LOGO_BYTES,
@@ -148,6 +155,13 @@ async def _apply_todos(
                 or match.text != text
                 or match.github_issue_number != item.issue
             ):
+                if match.github_issue_number != item.issue and item.issue is None:
+                    # The reference was taken out of the file by hand: the item
+                    # is an ordinary to-do again, and mirrored issue context it
+                    # kept would be about an issue it no longer tracks.
+                    match.github_issue_labels = None
+                    match.github_issue_assignee = None
+                    match.github_issue_comments = None
                 match.text = text
                 match.done = item.done
                 match.position = pos
@@ -176,9 +190,15 @@ async def _apply_todos(
     return changed
 
 
-async def _apply_file(session: AsyncSession, idea: Idea, text: str, sha: str) -> bool:
-    """Overwrite the idea with the file's content (git wins)."""
-    parsed = parse_idea_file(text)
+async def _apply_parsed(
+    session: AsyncSession, idea: Idea, parsed: ParsedIdeaFile
+) -> bool:
+    """Overwrite the idea with a parsed file's content (git wins).
+
+    Split from ``_apply_file`` because a merged push has a parse in hand
+    already and has to write it back: the merge result is what landed in the
+    repo, so the board has to end up holding the same thing.
+    """
     changed = False
     if parsed.title and parsed.title[:255] != idea.title:
         idea.title = parsed.title[:255]
@@ -192,14 +212,44 @@ async def _apply_file(session: AsyncSession, idea: Idea, text: str, sha: str) ->
     if parsed.progress is not None and parsed.progress != idea.progress:
         idea.progress = parsed.progress
         changed = True
-    changed = await _apply_todos(session, idea, parsed.todos) or changed
+    return await _apply_todos(session, idea, parsed.todos) or changed
+
+
+async def _apply_file(session: AsyncSession, idea: Idea, text: str, sha: str) -> bool:
+    """Overwrite the idea with the file's content and record the sync."""
+    changed = await _apply_parsed(session, idea, parse_idea_file(text))
     idea.github_file_sha = sha
     idea.git_synced_at = datetime.now(timezone.utc)
     return changed
 
 
+async def _base_text(idea: Idea, token: str | None) -> str | None:
+    """The IDEA.md we last synced, fetched by the blob sha we recorded.
+
+    This is what makes a push a three-way merge rather than a guess: without
+    the common ancestor, an item missing from the repo is indistinguishable
+    from one somebody just added here. A sha we can no longer fetch degrades
+    the merge to a union rather than failing the push.
+    """
+    if not idea.github_file_sha:
+        return None
+    try:
+        return (
+            await get_blob(idea.github_repo, idea.github_file_sha, token=token)
+        ).decode("utf-8")
+    except (GitHubError, UnicodeDecodeError):
+        return None
+
+
 async def _push(session: AsyncSession, idea: Idea, token: str | None, message: str) -> None:
-    """Commit the idea's current state to IDEA.md, retrying once on a stale sha."""
+    """Commit the idea's current state to IDEA.md, merging if the file moved.
+
+    A 409 means the file changed on GitHub since we last read it. Overwriting
+    it is what a sha check exists to prevent, so instead the two versions are
+    merged by meaning (see app.ideamerge) and the merged file is both pushed
+    and written back to the idea — the repo and the board then hold the same
+    thing, which is the only outcome that leaves nothing to discover later.
+    """
     content = _render(idea)
     try:
         sha = await put_file(
@@ -214,14 +264,26 @@ async def _push(session: AsyncSession, idea: Idea, token: str | None, message: s
         if exc.status_code != 409:
             raise
         found = await get_file(idea.github_repo, IDEA_FILE, token=token)
-        sha = await put_file(
-            idea.github_repo,
-            IDEA_FILE,
-            content,
-            message,
-            sha=found[1] if found else None,
-            token=token,
-        )
+        if found is None:
+            # Deleted on GitHub rather than edited: recreate it as it stands,
+            # since that is what the caller asked to commit.
+            sha = await put_file(
+                idea.github_repo, IDEA_FILE, content, message, sha=None, token=token
+            )
+        else:
+            theirs, their_sha = found
+            merged, parsed = merge_idea_files(
+                await _base_text(idea, token), content, theirs
+            )
+            sha = await put_file(
+                idea.github_repo,
+                IDEA_FILE,
+                merged,
+                f"{message} [merged]",
+                sha=their_sha,
+                token=token,
+            )
+            await _apply_parsed(session, idea, parsed)
     idea.github_file_sha = sha
     idea.git_synced_at = datetime.now(timezone.utc)
 
@@ -313,16 +375,82 @@ async def _pull_issues(session: AsyncSession, idea: Idea, token: str | None) -> 
     for todo in linked:
         issue = issues.get(todo.github_issue_number)
         if issue is None:
-            continue  # older than the pulled page, or deleted; leave it as it is
-        done = issue.state == "closed"
-        text = (issue.title or todo.text)[:500]
-        url = issue.html_url or _issue_url(idea.github_repo, issue.number)
-        if todo.done != done or todo.text != text or todo.github_issue_url != url:
-            todo.done = done
-            todo.text = text
-            todo.github_issue_url = url
+            continue  # beyond the pages pulled, or deleted; leave it as it is
+        if apply_issue(todo, issue, idea.github_repo):
             changed = True
     return changed
+
+
+def apply_issue(todo: Todo, issue: Issue, repo: str) -> bool:
+    """Copy an issue onto the to-do it backs. True when anything moved.
+
+    Shared with the webhook receiver, which is handed one issue rather than a
+    listing: a to-do has to end up in the same state whether the news arrived
+    because someone opened the tile or because GitHub pushed it.
+    """
+    labels = list(issue.labels)
+    fields = {
+        "done": issue.state == "closed",
+        "text": (issue.title or todo.text)[:500],
+        "github_issue_url": issue.html_url or _issue_url(repo, issue.number),
+        "github_issue_labels": labels,
+        "github_issue_assignee": issue.assignee,
+        "github_issue_comments": issue.comments,
+    }
+    changed = False
+    for name, value in fields.items():
+        if getattr(todo, name) != value:
+            setattr(todo, name, value)
+            changed = True
+    return changed
+
+
+async def import_issues(
+    session: AsyncSession, idea: Idea, user: User, *, state: str = "open"
+) -> int:
+    """Adopt the repo's issues as to-dos, returning how many were added.
+
+    The other direction has existed since to-dos could be promoted, which left
+    a repo with a hundred issues and a tile with none — the board could only
+    ever push work into GitHub, never pick up work that started there. An
+    issue already backing a to-do is skipped, so importing twice is a no-op
+    rather than a pile of duplicates.
+
+    Raises GitHubError: importing is a click, and a click that quietly did
+    nothing is worse than an error message.
+    """
+    if not idea.github_repo:
+        return 0
+    token = await resolve_token(session, idea, user)
+    issues = await list_issues(idea.github_repo, state=state, token=token)
+    known = set(
+        (
+            await session.execute(
+                select(Todo.github_issue_number).where(
+                    Todo.idea_id == idea.id, Todo.github_issue_number.is_not(None)
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    position = await session.scalar(
+        select(func.coalesce(func.max(Todo.position), -1)).where(
+            Todo.idea_id == idea.id
+        )
+    )
+    added = 0
+    for number in sorted(issues):
+        if number in known:
+            continue
+        issue = issues[number]
+        position += 1
+        todo = Todo(idea_id=idea.id, text="", position=position)
+        apply_issue(todo, issue, idea.github_repo)
+        todo.github_issue_number = number
+        session.add(todo)
+        added += 1
+    return added
 
 
 async def sync_issue_create(
@@ -340,10 +468,8 @@ async def sync_issue_create(
         f"Tracked on the IdeaBRD board under **{idea.title}**.",
         token=token,
     )
+    apply_issue(todo, issue, idea.github_repo)
     todo.github_issue_number = issue.number
-    todo.github_issue_url = issue.html_url or _issue_url(
-        idea.github_repo, issue.number
-    )
 
 
 async def sync_issue_update(

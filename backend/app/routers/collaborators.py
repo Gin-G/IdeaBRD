@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.access import resolve_idea, user_board_max_position
+from app.access import idea_member_ids, resolve_idea, user_board_max_position
 from app.auth import get_current_user
 from app.db import get_session
 from app.models import (
@@ -14,6 +14,7 @@ from app.models import (
     IdeaInvitation,
     User,
 )
+from app.dualwrite import after_idea_change
 from app.realtime import notify_board, notify_idea
 from app.schemas import CollaboratorOut, InviteIn
 
@@ -140,6 +141,9 @@ async def invite_collaborator(
         await session.commit()
         await notify_board([target.id])
         await notify_idea(session, idea_id, "updated")
+        # The idea has just arrived on someone else's board, so their repo has
+        # a tile it didn't have.
+        await after_idea_change(session, await idea_member_ids(session, idea_id))
         return CollaboratorOut(
             status="active",
             role=role,
@@ -204,6 +208,9 @@ async def remove_collaborator(
     await session.commit()
     await notify_board([target_user_id])
     await notify_idea(session, idea_id, "updated")
+    await after_idea_change(
+        session, [*await idea_member_ids(session, idea_id), target_user_id]
+    )
 
 
 @router.delete(

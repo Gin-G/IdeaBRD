@@ -1,0 +1,152 @@
+{{- if .Values.db.backup.enabled }}
+# Nightly logical backup of the CNPG cluster.
+#
+# The cluster runs a single instance with no replica, so its storage is the only
+# copy of every board that hasn't been published to git yet. A dump is the
+# smallest thing that changes that: it needs no cloud account, no credentials
+# beyond the ones the cluster already has, and it restores with pg_restore on
+# any Postgres — including a laptop, which is where a restore usually has to
+# happen when a cluster is the thing that broke.
+#
+# For point-in-time recovery, turn on db.backup.objectStore as well: CNPG then
+# ships WAL continuously and this CronJob becomes the belt to that's braces.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.db.name }}-backups
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.db.name }}
+    group: {{ .Values.db.group }}
+  annotations:
+    # Keep the dumps if the release is ever uninstalled: the one moment backups
+    # matter most is the moment somebody removes the thing that made them.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- with .Values.db.backup.storageClassName }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.db.backup.size }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ .Values.db.name }}-backup
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.db.name }}
+    group: {{ .Values.db.group }}
+spec:
+  schedule: {{ .Values.db.backup.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  # A missed window (node down, cluster upgrading) should still run, but only
+  # once — catching up on a week of skipped dumps helps nobody.
+  startingDeadlineSeconds: 3600
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app: {{ .Values.db.name }}-backup
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 70          # postgres in the alpine image
+            fsGroup: 70
+          containers:
+            - name: pg-dump
+              image: {{ .Values.db.backup.image }}
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: PGHOST
+                  value: {{ .Values.db.name }}-rw
+                - name: PGDATABASE
+                  value: {{ .Values.db.app.name }}
+                - name: PGUSER
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.db.name }}-superuser
+                      key: username
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.db.name }}-superuser
+                      key: password
+                - name: KEEP_DAYS
+                  value: {{ .Values.db.backup.keepDays | quote }}
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  stamp=$(date -u +%Y%m%dT%H%M%SZ)
+                  target="/backups/{{ .Values.db.app.name }}-${stamp}.dump"
+                  # Dump to a partial name and rename on success, so an
+                  # interrupted run never leaves a truncated file that looks
+                  # like a backup until the day someone tries to restore it.
+                  pg_dump --format=custom --compress=9 --file="${target}.partial"
+                  mv "${target}.partial" "$target"
+                  echo "wrote $target ($(du -h "$target" | cut -f1))"
+                  find /backups -name '*.partial' -mtime +1 -delete
+                  find /backups -name '*.dump' -mtime "+${KEEP_DAYS}" -print -delete
+              volumeMounts:
+                - name: backups
+                  mountPath: /backups
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: "1"
+                  memory: 512Mi
+          volumes:
+            - name: backups
+              persistentVolumeClaim:
+                claimName: {{ .Values.db.name }}-backups
+{{- end }}
+{{- if .Values.db.backup.objectStore.enabled }}
+---
+# Continuous WAL archiving to object storage, plus a scheduled base backup.
+# This is what makes point-in-time recovery possible; the dump above cannot.
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: {{ .Values.db.name }}-scheduled
+  namespace: {{ .Release.Namespace }}
+spec:
+  # CNPG schedules take six fields (seconds first), unlike a CronJob's five.
+  schedule: {{ .Values.db.backup.objectStore.schedule | quote }}
+  backupOwnerReference: self
+  cluster:
+    name: {{ .Values.db.name }}
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: {{ .Values.db.name }}-backup-eso
+  namespace: {{ .Release.Namespace }}
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: openbao-backend
+    kind: SecretStore
+  target:
+    name: {{ .Values.db.name }}-backup-creds
+  data:
+    - secretKey: ACCESS_KEY_ID
+      remoteRef:
+        key: {{ .Values.db.backup.objectStore.secretPath }}
+        property: access_key_id
+    - secretKey: ACCESS_SECRET_KEY
+      remoteRef:
+        key: {{ .Values.db.backup.objectStore.secretPath }}
+        property: secret_access_key
+{{- end }}

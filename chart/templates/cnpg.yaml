@@ -28,3 +28,27 @@ spec:
       owner: {{ .Values.db.app.owner }}
       secret:
         name: {{ .Values.db.name }}-app-user
+
+  {{- if .Values.db.backup.objectStore.enabled }}
+  # Continuous WAL archiving. With a single instance and no replica this is the
+  # only thing that can recover the database to a point in time rather than to
+  # last night — see chart/templates/db-backup.yaml.
+  backup:
+    retentionPolicy: {{ .Values.db.backup.objectStore.retentionPolicy | quote }}
+    barmanObjectStore:
+      destinationPath: {{ .Values.db.backup.objectStore.destinationPath | quote }}
+      {{- with .Values.db.backup.objectStore.endpointURL }}
+      endpointURL: {{ . | quote }}
+      {{- end }}
+      s3Credentials:
+        accessKeyId:
+          name: {{ .Values.db.name }}-backup-creds
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: {{ .Values.db.name }}-backup-creds
+          key: ACCESS_SECRET_KEY
+      wal:
+        compression: gzip
+      data:
+        compression: gzip
+  {{- end }}

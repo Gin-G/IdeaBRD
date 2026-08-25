@@ -28,6 +28,9 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "live: talks to the real GitHub API; needs IDEABRD_GITHUB_TOKEN (see tests/live)",
+]
 
 [tool.setuptools]
 packages = ["app"]

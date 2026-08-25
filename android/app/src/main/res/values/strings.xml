@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">IdeaBRD</string>
+    <string name="title_activity_main">IdeaBRD</string>
+    <string name="package_name">net.nickknows.ideabrd</string>
+    <string name="custom_url_scheme">net.nickknows.ideabrd</string>
+</resources>

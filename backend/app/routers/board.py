@@ -13,9 +13,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
 from app.db import get_session
+from app.dualwrite import state_for
 from app.github import GitHubError, create_repo, fetch_repo, list_orgs, whoami
 from app.models import User
 from app.publisher import DEFAULT_BRANCH, board_token, publish_board
+from app.reconcile import reconcile_board
 from app.schemas import (
     BoardInit,
     BoardInitOut,
@@ -23,7 +25,10 @@ from app.schemas import (
     BoardOwner,
     BoardOwnersOut,
     BoardRepoUpdate,
+    BoardSyncOut,
     PublishOut,
+    ReconcileEntry,
+    ReconcileOut,
 )
 
 router = APIRouter(prefix="/api/board", tags=["board"])
@@ -31,7 +36,11 @@ router = APIRouter(prefix="/api/board", tags=["board"])
 
 @router.get("", response_model=BoardOut)
 async def get_board(user: User = Depends(get_current_user)):
-    return BoardOut.model_validate(user)
+    board = BoardOut.model_validate(user)
+    # What the background dual-write last managed, so a repo that has quietly
+    # stopped keeping up says so instead of looking published.
+    board.sync = BoardSyncOut(**vars(state_for(user.id)))
+    return board
 
 
 @router.put("", response_model=BoardOut)
@@ -65,18 +74,50 @@ async def set_board_repo(
 @router.post("/publish", response_model=PublishOut)
 async def publish(
     opt_in: bool = False,
+    force: bool = False,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    """Write the board to its repo. ``opt_in`` accepts publishing into a repo
-    that already holds files but is not yet a board."""
+    """Write the board to its repo.
+
+    ``opt_in`` accepts publishing into a repo that already holds files but is
+    not yet a board. ``force`` accepts publishing over a repo that has moved
+    since our last publish — the refusal is there so a direct commit is never
+    overwritten unseen, and this is how someone says they have seen it.
+    """
     if not user.board_repo:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No board repo configured",
         )
-    result = await publish_board(session, user, opt_in=opt_in)
+    result = await publish_board(session, user, opt_in=opt_in, force=force)
     return PublishOut(**vars(result))
+
+
+@router.get("/reconcile", response_model=ReconcileOut)
+async def reconcile(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Every idea, as the database and the repo each have it, and what differs.
+
+    Read-only: this is the evidence for cutting over to git, not the cutover.
+    """
+    if not user.board_repo:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No board repo configured",
+        )
+    report = await reconcile_board(session, user)
+    return ReconcileOut(
+        repo=report.repo,
+        branch=report.branch,
+        commit_sha=report.commit_sha,
+        in_sync=report.in_sync,
+        moved=report.moved,
+        entries=[ReconcileEntry(**vars(e)) for e in report.entries],
+        error=report.error,
+    )
 
 
 async def _require_token(session: AsyncSession, user: User) -> str:

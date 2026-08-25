@@ -1,6 +1,6 @@
 ---
 status: active
-progress: 75
+progress: 84
 ---
 
 # IdeaBRD
@@ -49,12 +49,13 @@ HTML comments are stripped on read, so this block never reaches the board.
 A personal idea board: each idea is a tile with notes, a to-do list that can be
 backed by GitHub issues, progress tracking and live GitHub data for repo-linked
 projects. FastAPI + async SQLAlchemy on Postgres (CNPG), SvelteKit + Tailwind
-front end, deployed to Kubernetes by Argo CD with secrets from OpenBao. Backend
-lives in `backend/app`, the UI in `frontend/src`, the chart in `chart/`;
-`docker-compose.yml` runs the whole stack locally and `backend/tests` holds the
-pytest suite. Moving to a git-only model next: a central board repo becomes the
-source of truth so an Android app can run standalone, with the database
-dual-written and kept authoritative until the repo has proven itself.
+front end, deployed to Kubernetes by Argo CD with secrets from OpenBao, plus an
+Android app that reads the board straight from git. Backend lives in
+`backend/app`, the UI in `frontend/src`, the chart in `chart/`, the app in
+`android/`; `docker-compose.yml` runs the stack locally and `backend/tests`
+holds the pytest suite. Every board change is now dual-written to a git repo,
+and the phone reads that repo with no server at all — the database stays
+authoritative until reconciliation says the git copy has earned the swap.
 
 ## Todos
 
@@ -73,27 +74,33 @@ dual-written and kept authoritative until the repo has proven itself.
 - [x] Write the IDEA.md format rules into every file as a stripped-on-read HTML comment, with the `## Todos` heading always present — a seeded stub was the whole spec its next editor saw, and the rules only existed in this repo
 - [x] Back to-dos with GitHub issues: promote one from the tile, mirror its title and open/closed state in both directions, and carry the reference as `(#12)` in this file — issue-backed items are matched by number instead of text, so rewording one stops silently replacing it
 - [x] Tell whoever edits IDEA.md next that it *is* the tracker — the format rules said how to write the file but never that progress and new work belong in it rather than a side channel
-- [ ] Show richer issue data on the tile (labels, assignee, comment count), and import a repo's existing issues as to-dos instead of only pushing new ones
-- [ ] Add `/api/webhooks/github` so an issue closed on GitHub pushes to the tile over the existing WebSocket, instead of the change waiting for someone to open the tile
-- [ ] Page the issue pull past the first 100, or retire it once webhooks land — a to-do pointing at an older issue currently keeps whatever state it already had
-- [ ] Mount the to-do list in `IdeaModal.svelte` too; the promote action only exists on the full idea page
-- [ ] Decide on GitHub Projects v2 — GraphQL-only so none of `app/github.py` is reusable, needs the `project` scope added (every existing GitHub identity has to re-authorize, since OAuth tokens don't gain scopes), and projects are user/org-owned so an idea needs its own project id plus a per-project Status field option mapping
-- [ ] Back up the Postgres cluster — it runs a single CNPG instance with no replica
+- [x] Show richer issue data on the tile (labels, assignee, comment count), and import a repo's existing issues as to-dos instead of only pushing new ones
+- [x] Add `/api/webhooks/github` so an issue closed on GitHub pushes to the tile over the existing WebSocket, instead of the change waiting for someone to open the tile
+- [x] Page the issue pull past the first 100, or retire it once webhooks land — a to-do pointing at an older issue currently keeps whatever state it already had
+- [x] Mount the to-do list in `IdeaModal.svelte` too; the promote action only exists on the full idea page
+- [x] Decide on GitHub Projects v2 — decided against, and the reasons are in `docs/github-projects-v2.md` so they don't get rediscovered: GraphQL-only, needs a scope every existing login would have to re-authorize for, and projects are user-owned so an idea would need its own project id plus a Status field mapping
+- [x] Back up the Postgres cluster — it runs a single CNPG instance with no replica
 - [x] Define the board repo layout — one directory per idea and no manifest, with order and colour in each idea's own frontmatter, so moving a tile rewrites one file instead of a file every board shares
 - [x] Give every idea a stable id that outlives Postgres and backfill it, since a serial primary key can't be the identity a git-only board is keyed by
 - [x] Publish the whole board to the central repo, so a complete git copy exists before anything is asked to depend on it
-- [ ] Dual-write every idea mutation to the board repo, leaving the database authoritative while the git copy earns trust
-- [ ] Reconcile the board repo against the database and report the diff, so cutover is a decision backed by evidence rather than a leap
-- [ ] Port `ideafile.py` to Kotlin with its tests — the load-bearing spike, since the phone owns parsing once no server does
-- [ ] Merge IDEA.md semantically rather than by line: parse both sides, match to-dos the way `_apply_todos` already does, re-render
-- [ ] Ship the existing SvelteKit SPA as an Android app via Capacitor, with a native plugin for JGit and Keystore-backed tokens
-- [ ] Authenticate on device with the GitHub device flow, since an app distributed to users can't ship a client secret
+- [x] Dual-write every idea mutation to the board repo, leaving the database authoritative while the git copy earns trust
+- [x] Reconcile the board repo against the database and report the diff, so cutover is a decision backed by evidence rather than a leap
+- [x] Port `ideafile.py` to Kotlin with its tests — the load-bearing spike, since the phone owns parsing once no server does
+- [x] Merge IDEA.md semantically rather than by line: parse both sides, match to-dos the way `_apply_todos` already does, re-render
+- [x] Ship the existing SvelteKit SPA as an Android app via Capacitor, with a native plugin for JGit and Keystore-backed tokens
+- [x] Authenticate on device with the GitHub device flow, since an app distributed to users can't ship a client secret
+- [x] Release the Android app from a GitHub Actions workflow on a version tag, signed and attached to a release
+- [x] Hold both IDEA.md renderers to the same golden files, so the Kotlin port and the Python one can't drift into writing different bytes for the same idea
 - [ ] Cut over to git as the only store and retire the database, chart and cluster once the board repo has proven itself
 - [x] Name a shared idea on a collaborator's board — slugs are unique per owner, so an idea shared onto a board that already has that directory has nowhere to go
-- [ ] Refuse to publish over a board repo that moved since last time — `board_commit_sha` is recorded on every publish and read by nothing, so a direct edit to the repo is silently overwritten
+- [x] Refuse to publish over a board repo that moved since last time — `board_commit_sha` is recorded on every publish and read by nothing, so a direct edit to the repo is silently overwritten
 - [ ] Let collaboration be git's: two people who both link an idea's repo collaborate there by branch and PR, so IdeaCollaborator, IdeaInvitation and roles retire at cutover in favour of repo permissions
-- [ ] Promote a note-only idea to its own repo — an idea kept inside a board repo has nowhere for anyone else to link, so giving it a repo is what sharing now means
+- [x] Promote a note-only idea to its own repo — an idea kept inside a board repo has nowhere for anyone else to link, so giving it a repo is what sharing now means
 - [x] Stop the board repo copying a linked idea at all — it records a reference and the board keys, so there is no second copy of the notes, to-dos or logo to explain, and none that can drift
-- [ ] Show open pull requests on a repo-linked tile, now that a PR is where an idea's collaboration actually happens
+- [x] Show open pull requests on a repo-linked tile, now that a PR is where an idea's collaboration actually happens
 - [x] Create a board repo from the app on first run — pick the account or org, get an empty repo, and publish the existing board into it as that repo's first commit
-- [ ] Check the GitHub client against a real repo, not just respx — the publisher's tests all passed while GitHub refused every git data write to a repo with no commits
+- [ ] Run the live GitHub suite against a real repo — `backend/tests/live` and a weekly workflow now exist, but nothing has actually run them until `IDEABRD_GITHUB_TOKEN` is set on the repository
+- [ ] Try the Android app on real hardware — CI builds and packages it, but JGit on a device (clone size, storage, background time limits) has never been exercised
+- [ ] Give the Android release a stable signing key — until `ANDROID_KEYSTORE_BASE64` is set every release is signed differently, and Android refuses to install one over another
+- [ ] Point a GitHub webhook at the deployment and put `webhook_secret` in OpenBao — the receiver refuses every request until the secret exists, so it is code that isn't running yet
+- [ ] Show issue-backed to-dos properly on the phone — the `(#12)` reference round-trips, but nothing there talks to the issues API, so labels and open/closed state come from the file

@@ -15,6 +15,7 @@ from app.access import (
 )
 from app.auth import get_current_user
 from app.db import get_session
+from app.dualwrite import after_idea_change
 from app.gitsync import (
     SyncStatus,
     sync_init,
@@ -26,9 +27,12 @@ from app.gitsync import (
 from app.logos import ALLOWED_LOGO_TYPES, MAX_LOGO_BYTES
 from app.models import Idea, IdeaCollaborator, IdeaInvitation, IdeaLogo, User
 from app.realtime import notify_idea
+from app.github import GitHubError, create_repo
+from app.publisher import board_token
 from app.schemas import (
     IdeaCreate,
     IdeaOut,
+    IdeaRepoInit,
     IdeaSummary,
     IdeaUpdate,
     OwnerInfo,
@@ -67,6 +71,7 @@ async def _pull_from_git(
     await session.commit()
     if sync_state.changed:
         await notify_idea(session, idea_id, "updated")
+        await after_idea_change(session, await idea_member_ids(session, idea_id))
     # Re-select fresh: the commit expired server-onupdate columns, and a pull
     # may have changed todo rows outside the loaded relationship.
     idea, _ = await resolve_idea(session, idea_id, user, with_todos=True, fresh=True)
@@ -156,6 +161,7 @@ async def create_idea(
     idea = Idea(user_id=user.id, position=pos + 1, **payload.model_dump())
     session.add(idea)
     await session.commit()
+    await after_idea_change(session, [user.id])
     idea, role = await resolve_idea(session, idea.id, user, with_todos=True)
     sync_error = None
     if idea.github_repo:
@@ -206,6 +212,9 @@ async def reorder_ideas(
                 .values(position=item.position)
             )
     await session.commit()
+    # Only this user's board moved: a rank belongs to the board showing the
+    # tile, not to the idea, so nobody else's repo changes.
+    await after_idea_change(session, [user.id])
 
 
 @router.get("/{idea_id}", response_model=IdeaOut)
@@ -287,6 +296,7 @@ async def update_idea(
     await session.commit()
     idea, role = await resolve_idea(session, idea_id, user, with_todos=True)
     await notify_idea(session, idea_id, "updated")
+    await after_idea_change(session, await idea_member_ids(session, idea_id))
     sync_error = None
     if idea.github_repo:
         if repo_changed:
@@ -299,7 +309,11 @@ async def update_idea(
                 session, idea, user, f"Update idea: {idea.title}"
             )
             await session.commit()
-            idea, role = await resolve_idea(session, idea_id, user, with_todos=True)
+            # fresh: a push that had to merge writes the merged file back into
+            # the idea, todo rows included, outside the loaded relationship.
+            idea, role = await resolve_idea(
+                session, idea_id, user, with_todos=True, fresh=True
+            )
     owner = None if role == "owner" else await session.get(User, idea.user_id)
     return _idea_out(idea, role, owner, sync_error)
 
@@ -321,6 +335,75 @@ async def delete_idea(
     await session.delete(idea)
     await session.commit()
     await notify_idea(session, idea_id, "deleted", member_ids=member_ids)
+    # The membership rows are gone, so the ids captured above are the only
+    # record of whose boards just lost a tile.
+    await after_idea_change(session, member_ids)
+
+
+@router.post("/{idea_id}/repo", response_model=IdeaOut)
+async def give_idea_a_repo(
+    idea_id: int,
+    payload: IdeaRepoInit,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Create a repository for a note-only idea and move the idea into it.
+
+    An idea kept inside a board repo has nowhere for anyone else to link: the
+    board is one person's, and a directory in it is not something a second
+    person can be given access to. Giving the idea a repo of its own is what
+    sharing an idea now *means* — the repo is the thing collaborators are added
+    to, branch and review happen there, and the tile becomes a reference to it
+    on every board that carries it.
+
+    Seeding IDEA.md needs no separate opt-in: the repo did not exist a moment
+    ago, so there is nothing in it to overwrite.
+    """
+    idea, role = await resolve_idea(session, idea_id, user, with_todos=True)
+    if idea is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Idea not found")
+    if role != "owner":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the owner can give an idea a repo",
+        )
+    if idea.github_repo:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"This idea already lives in {idea.github_repo}",
+        )
+    token = await board_token(session, user)
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Connect a GitHub account first",
+        )
+    try:
+        full_name, _branch = await create_repo(
+            payload.name,
+            org=payload.org or None,
+            private=payload.private,
+            description=idea.title,
+            token=token,
+        )
+    except GitHubError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+    idea.github_repo = full_name
+    idea.github_file_sha = None
+    idea.git_synced_at = None
+    idea.github_logo_path = None
+    idea.github_logo_sha = None
+    await session.commit()
+    idea, role = await resolve_idea(session, idea_id, user, with_todos=True)
+    sync_error = await sync_init(session, idea, user)
+    await session.commit()
+    idea, role = await resolve_idea(session, idea_id, user, with_todos=True, fresh=True)
+    await notify_idea(session, idea_id, "updated")
+    # Every board carrying this tile now records a reference instead of a copy.
+    await after_idea_change(session, await idea_member_ids(session, idea_id))
+    owner = None if role == "owner" else await session.get(User, idea.user_id)
+    return _idea_out(idea, role, owner, sync_error)
 
 
 # ---- Tile logo upload ----
@@ -373,6 +456,7 @@ async def upload_logo(
     await session.commit()
     idea, role = await resolve_idea(session, idea_id, user, with_todos=True)
     await notify_idea(session, idea_id, "updated")
+    await after_idea_change(session, await idea_member_ids(session, idea_id))
     owner = None if role == "owner" else await session.get(User, idea.user_id)
     return _idea_out(idea, role, owner, sync_error)
 
@@ -418,5 +502,6 @@ async def delete_logo(
     await session.commit()
     idea, role = await resolve_idea(session, idea_id, user, with_todos=True)
     await notify_idea(session, idea_id, "updated")
+    await after_idea_change(session, await idea_member_ids(session, idea_id))
     owner = None if role == "owner" else await session.get(User, idea.user_id)
     return _idea_out(idea, role, owner, sync_error)

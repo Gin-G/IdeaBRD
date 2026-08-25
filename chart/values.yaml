@@ -37,6 +37,11 @@ backend:
   githubOAuth: true
   # OpenBao path holding the GitHub OAuth app credentials (client_id, client_secret)
   githubSecretPath: ideabrd/github
+  # Receive GitHub webhooks at /api/webhooks/github, so an issue closed on
+  # GitHub reaches an open board instead of waiting to be noticed. Requires
+  # webhook_secret in OpenBao at secretPath, matching the secret configured on
+  # the GitHub webhook itself. Without it the endpoint refuses every request.
+  webhooks: true
   container:
     image: docker.io/ncging/ideabrd-backend:2026-08-20.19.19
     imagePullPolicy: Always
@@ -64,6 +69,30 @@ db:
       cpu: "1"
       memory: 1Gi
   secretPath: ideabrd/db
+  # Backups. The cluster is a single instance with no replica, so its volume is
+  # the only copy of anything not yet published to git.
+  backup:
+    # Nightly pg_dump to a PVC. Self-contained: no cloud account, no extra
+    # credentials, and restorable with pg_restore anywhere.
+    enabled: true
+    schedule: "0 2 * * *"
+    keepDays: 14
+    size: 10Gi
+    storageClassName: ""
+    # pg_dump only needs to be no older than the server, so a newer client is
+    # the safe default against whichever Postgres the operator runs.
+    image: postgres:17-alpine
+    # Continuous WAL archiving to S3-compatible storage, for point-in-time
+    # recovery. Needs access_key_id + secret_access_key in OpenBao at
+    # secretPath, and a bucket that already exists.
+    objectStore:
+      enabled: false
+      destinationPath: ""          # e.g. s3://backups/ideabrd
+      endpointURL: ""              # e.g. https://minio.example.com (blank = AWS)
+      secretPath: ideabrd/backup
+      # CNPG cron takes six fields, seconds first.
+      schedule: "0 0 2 * * *"
+      retentionPolicy: "30d"
   app:
     name: ideabrd            # database name
     owner: ideabrd           # owning role (must equal the app-user username)

@@ -5,12 +5,23 @@
 	import { api, redirectToLogin, redirectToGithubLogin } from '$lib/api';
 	import AccountPanel from '$lib/components/AccountPanel.svelte';
 	import BoardPanel from '$lib/components/BoardPanel.svelte';
+	import NativeSetup from '$lib/components/NativeSetup.svelte';
+	import { isNative } from '$lib/native/plugins';
 
 	let { children } = $props();
 	let showAccount = $state(false);
 	let showBoard = $state(false);
+	// On the device there is no server to redirect to, so signing in and
+	// choosing a board repo happen here before the board can be shown at all.
+	const native = isNative();
+	let deviceReady = $state(false);
 
 	onMount(loadUser);
+
+	async function deviceSetupDone() {
+		deviceReady = true;
+		await loadUser();
+	}
 
 	async function logout() {
 		await api.logout();
@@ -61,6 +72,8 @@
 					class="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-indigo-400"
 				></div>
 			</div>
+		{:else if native && (!auth.user || !deviceReady)}
+			<NativeSetup oncomplete={deviceSetupDone} />
 		{:else if !auth.user}
 			<div class="mx-auto max-w-sm py-24 text-center">
 				<h1 class="text-2xl font-bold">Welcome to IdeaBRD</h1>

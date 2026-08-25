@@ -10,6 +10,8 @@
 	import TodoList from '$lib/components/TodoList.svelte';
 	import GitHubPanel from '$lib/components/GitHubPanel.svelte';
 	import GitSyncPanel from '$lib/components/GitSyncPanel.svelte';
+	import PullRequestsPanel from '$lib/components/PullRequestsPanel.svelte';
+	import IdeaRepoPanel from '$lib/components/IdeaRepoPanel.svelte';
 	import IdeaModal from '$lib/components/IdeaModal.svelte';
 	import CollaboratorsPanel from '$lib/components/CollaboratorsPanel.svelte';
 
@@ -118,8 +120,9 @@
 		</div>
 	{/if}
 
-	<!-- Single column unless there's a repo to show alongside. -->
-	<div class="grid gap-6 {idea.github_repo ? 'lg:grid-cols-[1fr,20rem]' : ''}">
+	<!-- Single column unless there's a repo to show alongside — or an offer to
+	     give the idea one, which is the same column's job. -->
+	<div class="grid gap-6 {idea.github_repo || isOwner ? 'lg:grid-cols-[1fr,20rem]' : ''}">
 		<!-- Main column -->
 		<div class="space-y-6">
 			<div class="card p-6">
@@ -223,6 +226,11 @@
 			<div class="space-y-6">
 				<GitSyncPanel {idea} {canEdit} onsynced={(updated) => (idea = updated)} />
 				<GitHubPanel ideaId={idea.id} repo={idea.github_repo} />
+				<PullRequestsPanel ideaId={idea.id} repo={idea.github_repo} />
+			</div>
+		{:else if isOwner}
+			<div class="space-y-6">
+				<IdeaRepoPanel {idea} oncreated={(updated) => (idea = updated)} />
 			</div>
 		{/if}
 	</div>
@@ -232,6 +240,7 @@
 			{idea}
 			onsave={saveMeta}
 			onlogo={(updated) => (idea = updated)}
+			ontodos={(todos) => idea && (idea.todos = todos)}
 			oncancel={() => (editing = false)}
 		/>
 	{/if}

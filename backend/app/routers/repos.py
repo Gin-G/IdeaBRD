@@ -6,9 +6,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.access import resolve_idea
 from app.auth import get_current_user
 from app.db import get_session
-from app.github import GitHubError, fetch_repo
+from app.github import GitHubError, fetch_repo, list_pulls
+from app.gitsync import resolve_token
 from app.models import User
-from app.schemas import GitHubRepoOut
+from app.schemas import GitHubRepoOut, PullRequestOut
 
 router = APIRouter(prefix="/api/ideas", tags=["github"])
 
@@ -32,3 +33,34 @@ async def idea_github(
         return await fetch_repo(idea.github_repo)
     except GitHubError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+@router.get("/{idea_id}/pulls", response_model=list[PullRequestOut])
+async def idea_pulls(
+    idea_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Open pull requests on the idea's repo.
+
+    Once an idea has a repo of its own, a pull request is where its
+    collaboration actually happens — a tile that shows stars and forks but not
+    the review someone opened this morning is showing the wrong thing.
+
+    Read with the same token the tile syncs with, so a private repo's pull
+    requests are visible to exactly the people who can already see the idea.
+    """
+    idea, _role = await resolve_idea(session, idea_id, user)
+    if idea is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Idea not found")
+    if not idea.github_repo:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Idea has no linked GitHub repo",
+        )
+    try:
+        token = await resolve_token(session, idea, user)
+        pulls = await list_pulls(idea.github_repo, token=token)
+    except GitHubError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    return [PullRequestOut(**vars(p)) for p in pulls]

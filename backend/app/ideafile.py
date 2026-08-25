@@ -224,7 +224,7 @@ def render_reference_file(*, repo: str, rank: str, color: str) -> str:
             f"This idea lives in [{repo}]({url}).",
             "",
             "This board records which ideas are on it and where each one lives.",
-            f"The idea itself — its notes, progress and to-dos — is in that",
+            "The idea itself — its notes, progress and to-dos — is in that",
             "repository's own IDEA.md, which is the copy that counts.",
             "",
         ]

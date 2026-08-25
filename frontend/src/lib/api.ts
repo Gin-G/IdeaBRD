@@ -6,12 +6,18 @@ import type {
 	Idea,
 	IdeaSummary,
 	Identity,
+	ImportedIssues,
 	Providers,
 	PublishResult,
+	PullRequest,
+	Reconcile,
 	Role,
 	Todo,
 	User
 } from './types';
+
+import { isNative } from './native/plugins';
+import { nativeApi } from './native/api';
 
 // Same-origin in production (nginx proxies /api). Override with VITE_API_BASE if needed.
 const BASE = import.meta.env.VITE_API_BASE ?? '';
@@ -67,7 +73,7 @@ export function connectGithub() {
 	window.location.href = `${BASE}/api/auth/github/login?connect=1`;
 }
 
-export const api = {
+const httpApi = {
 	providers: () => request<Providers>('/api/auth/providers'),
 	me: () => request<User>('/api/auth/me'),
 	identities: () => request<Identity[]>('/api/auth/identities'),
@@ -102,8 +108,20 @@ export const api = {
 	/** Open a GitHub issue for this to-do; the issue then owns its text and state. */
 	promoteTodo: (todoId: number) =>
 		request<Todo>(`/api/todos/${todoId}/issue`, { method: 'POST' }),
+	/** Adopt the repo's issues as to-dos — the opposite direction to promoting. */
+	importIssues: (ideaId: number, state: 'open' | 'closed' | 'all' = 'open') =>
+		request<ImportedIssues>(`/api/ideas/${ideaId}/todos/import?state=${state}`, {
+			method: 'POST'
+		}),
 
 	github: (ideaId: number) => request<GitHubRepo>(`/api/ideas/${ideaId}/github`),
+	pulls: (ideaId: number) => request<PullRequest[]>(`/api/ideas/${ideaId}/pulls`),
+	/** Create a repo for a note-only idea and move the idea into it. */
+	giveIdeaRepo: (ideaId: number, name: string, org: string | null, isPrivate: boolean) =>
+		request<Idea>(`/api/ideas/${ideaId}/repo`, {
+			method: 'POST',
+			body: JSON.stringify({ name, org, private: isPrivate })
+		}),
 
 	/** Upload a tile logo. No Content-Type header: the browser sets the multipart boundary. */
 	uploadLogo: (ideaId: number, file: File) => {
@@ -126,9 +144,14 @@ export const api = {
 		request<Board>('/api/board', { method: 'PUT', body: JSON.stringify({ board_repo: repo }) }),
 	/** What a publish would change, without changing anything. */
 	boardStatus: () => request<PublishResult>('/api/board/status'),
-	/** Write the board to its repo. optIn accepts a repo that holds other files. */
-	publishBoard: (optIn = false) =>
-		request<PublishResult>(`/api/board/publish?opt_in=${optIn}`, { method: 'POST' }),
+	/** Write the board to its repo. optIn accepts a repo that holds other files;
+	 *  force accepts one that has moved since the last publish. */
+	publishBoard: (optIn = false, force = false) =>
+		request<PublishResult>(`/api/board/publish?opt_in=${optIn}&force=${force}`, {
+			method: 'POST'
+		}),
+	/** Every idea, as the database and the repo each have it. Read-only. */
+	reconcileBoard: () => request<Reconcile>('/api/board/reconcile'),
 
 	listCollaborators: (ideaId: number) =>
 		request<Collaborator[]>(`/api/ideas/${ideaId}/collaborators`),
@@ -142,3 +165,18 @@ export const api = {
 	cancelInvite: (ideaId: number, inviteId: number) =>
 		request<void>(`/api/ideas/${ideaId}/invitations/${inviteId}`, { method: 'DELETE' })
 };
+
+/**
+ * The board, from wherever this build reads it.
+ *
+ * In a browser that is the API. Inside the Android app there is no server at
+ * all: the board is a git checkout on the device, and `nativeApi` implements
+ * this same surface over it. Components call `api` either way and never find
+ * out which — the alternative is every page carrying two code paths for the
+ * rest of its life.
+ */
+export const api: typeof httpApi = isNative()
+	? (nativeApi as unknown as typeof httpApi)
+	: httpApi;
+
+export { httpApi };

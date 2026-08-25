@@ -1,0 +1,55 @@
+# Runs the GitHub client against GitHub.
+#
+# Everything else mocks the API, and a mock agrees with whatever the code
+# believes. That is how the board publisher shipped with a green suite and could
+# not make its first commit: GitHub rejects every git data write to a repo with
+# no commits, and no mock had ever said so. This suite creates a throwaway repo,
+# publishes a board into it, reads it back and deletes it again.
+#
+# Weekly rather than per-push: it needs a real token, costs real API calls, and
+# the failure it catches is GitHub changing, not us.
+#
+# Needs a repository secret IDEABRD_GITHUB_TOKEN — a PAT with `repo` and
+# `delete_repo`, ideally on a throwaway account. Set IDEABRD_GITHUB_ORG as a
+# variable to create the test repos in an organisation instead.
+name: IdeaBRD Live GitHub Test
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the code repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install dependencies
+        working-directory: backend
+        run: pip install -e ".[dev]"
+
+      - name: Check the token is there before pretending to test anything
+        env:
+          IDEABRD_GITHUB_TOKEN: ${{ secrets.IDEABRD_GITHUB_TOKEN }}
+        run: |
+          if [ -z "${IDEABRD_GITHUB_TOKEN:-}" ]; then
+            echo "::error::IDEABRD_GITHUB_TOKEN is not set, so the live tests would" \
+                 "silently skip and this job would pass without testing anything."
+            exit 1
+          fi
+
+      - name: Run the live suite
+        working-directory: backend
+        env:
+          IDEABRD_GITHUB_TOKEN: ${{ secrets.IDEABRD_GITHUB_TOKEN }}
+          IDEABRD_GITHUB_ORG: ${{ vars.IDEABRD_GITHUB_ORG }}
+        run: pytest tests/live -m live -v

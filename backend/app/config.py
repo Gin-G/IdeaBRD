@@ -40,12 +40,21 @@ class Settings(BaseSettings):
         "https://accounts.google.com/.well-known/openid-configuration"
     )
 
+    # Mirror every board change into the board repo in the background. The
+    # database stays authoritative; this is the copy earning its trust.
+    board_dual_write: bool = True
+
     # Where to send the browser after a successful login (the SPA origin)
     frontend_url: str = "http://localhost:5173"
 
     # GitHub — shared PAT (fallback for live repo data when a user has no GitHub login)
     github_token: str = ""
     github_api_base: str = "https://api.github.com"
+
+    # Shared secret for the GitHub webhook receiver. Empty disables the
+    # endpoint outright: an unsigned writer into people's boards is not
+    # something to leave running because a value was forgotten.
+    github_webhook_secret: str = ""
 
     # GitHub OAuth app (user login + per-user repo access)
     github_client_id: str = ""

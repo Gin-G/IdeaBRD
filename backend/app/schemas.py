@@ -45,9 +45,13 @@ class TodoOut(BaseModel):
     text: str
     done: bool
     position: int
-    # Set once the to-do has been promoted to an issue in the idea's repo.
+    # Set once the to-do has been promoted to an issue in the idea's repo, or
+    # imported from one. Mirrored from GitHub and read-only here.
     github_issue_number: int | None = None
     github_issue_url: str | None = None
+    github_issue_labels: list[str] | None = None
+    github_issue_assignee: str | None = None
+    github_issue_comments: int | None = None
 
 
 class TodoCreate(BaseModel):
@@ -164,6 +168,41 @@ class InviteIn(BaseModel):
 # ---- GitHub ----
 
 
+class PullRequestOut(BaseModel):
+    """An open pull request on an idea's repo — where its collaboration happens."""
+
+    number: int
+    title: str
+    html_url: str
+    author: str | None = None
+    draft: bool = False
+    updated_at: str | None = None
+
+
+class ImportIssuesOut(BaseModel):
+    """Result of adopting a repo's issues as to-dos."""
+
+    imported: int = 0
+    todos: list[TodoOut] = Field(default_factory=list)
+
+
+class IdeaRepoInit(BaseModel):
+    """Give a note-only idea a repository of its own."""
+
+    name: str = Field(min_length=1, max_length=100)
+    org: str | None = None
+    private: bool = True
+
+
+class WebhookResult(BaseModel):
+    """What a webhook delivery did, echoed back into GitHub's delivery log."""
+
+    event: str
+    # False for an event we take no interest in; the delivery still succeeded.
+    handled: bool = False
+    ideas: int = 0
+
+
 class GitHubRepoOut(BaseModel):
     full_name: str
     html_url: str
@@ -189,6 +228,8 @@ class BoardOut(BaseModel):
     board_branch: str | None = None
     board_commit_sha: str | None = None
     board_published_at: datetime | None = None
+    # Filled in by the API from the background publisher's in-memory state.
+    sync: "BoardSyncOut | None" = None
 
 
 class BoardRepoUpdate(BaseModel):
@@ -207,6 +248,10 @@ class PublishOut(BaseModel):
     removed: list[str] = Field(default_factory=list)
     # The repo holds files but isn't a board yet; publishing needs opt_in.
     needs_opt_in: bool = False
+    # The repo moved since our last publish — someone committed to it directly.
+    # Nothing was written; publishing over it needs ``force``.
+    moved: bool = False
+    head_sha: str | None = None
     error: str | None = None
 
 
@@ -234,3 +279,42 @@ class BoardInit(BaseModel):
 class BoardInitOut(BaseModel):
     board: BoardOut
     publish: PublishOut
+
+
+class ReconcileEntry(BaseModel):
+    """One idea, as the database and the board repo each have it."""
+
+    slug: str
+    title: str | None = None
+    idea_id: int | None = None
+    # same | differs | missing_in_repo | missing_in_board
+    state: str
+    # Field names that disagree, e.g. ["status", "todos"]. Empty unless differs.
+    differences: list[str] = Field(default_factory=list)
+
+
+class ReconcileOut(BaseModel):
+    """Whether the board repo still says what the database says.
+
+    Cutting over to git means trusting the repo. This is the evidence for that
+    decision: every idea, on both sides, and what disagrees.
+    """
+
+    repo: str | None = None
+    branch: str | None = None
+    commit_sha: str | None = None
+    # True when nothing disagrees: the repo is a faithful copy of the board.
+    in_sync: bool = False
+    # Set when the repo moved since our last publish (someone edited it directly).
+    moved: bool = False
+    entries: list[ReconcileEntry] = Field(default_factory=list)
+    error: str | None = None
+
+
+class BoardSyncOut(BaseModel):
+    """State of the background dual-write for this board."""
+
+    # True while a publish is queued or running for this user.
+    pending: bool = False
+    last_error: str | None = None
+    last_commit_sha: str | None = None

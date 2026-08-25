@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     DateTime,
     ForeignKey,
@@ -174,6 +175,13 @@ class Todo(Base):
     # unlike a plain to-do, which the board owns.
     github_issue_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
     github_issue_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # Issue context, mirrored from GitHub and never written back: labels,
+    # whoever it is assigned to, and how much discussion it has attracted.
+    # These are what make an issue-backed to-do worth more on a board than the
+    # sentence it started as. Null everywhere for a plain to-do.
+    github_issue_labels: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    github_issue_assignee: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    github_issue_comments: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

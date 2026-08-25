@@ -20,9 +20,21 @@
 	let newText = $state('');
 	let adding = $state(false);
 	let promoting = $state<number | null>(null);
+	let importing = $state(false);
+	let imported = $state<number | null>(null);
 	let error = $state('');
 
 	const done = $derived(todos.filter((t) => t.done).length);
+
+	/** Anything the issue carries that the sentence itself doesn't. */
+	function context(todo: Todo): boolean {
+		return Boolean(
+			todo.github_issue_number &&
+				((todo.github_issue_labels?.length ?? 0) > 0 ||
+					todo.github_issue_assignee ||
+					(todo.github_issue_comments ?? 0) > 0)
+		);
+	}
 
 	async function add(e: SubmitEvent) {
 		e.preventDefault();
@@ -52,6 +64,23 @@
 		onchange?.();
 	}
 
+	/** Pull the repo's issues in as to-dos — the opposite direction to promoting. */
+	async function importIssues() {
+		importing = true;
+		error = '';
+		imported = null;
+		try {
+			const result = await api.importIssues(ideaId);
+			todos = result.todos;
+			imported = result.imported;
+			onchange?.();
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Could not read the repo\'s issues';
+		} finally {
+			importing = false;
+		}
+	}
+
 	/** Promoting is an explicit action, so its failure is shown rather than swallowed. */
 	async function promote(todo: Todo) {
 		promoting = todo.id;
@@ -69,12 +98,33 @@
 </script>
 
 <div>
-	<div class="mb-3 flex items-center justify-between">
+	<div class="mb-3 flex flex-wrap items-center justify-between gap-2">
 		<h3 class="font-semibold">To-do</h3>
-		{#if todos.length}
-			<span class="text-xs text-slate-400">{done}/{todos.length} done</span>
-		{/if}
+		<div class="flex items-center gap-3">
+			{#if canEdit && repo}
+				<button
+					type="button"
+					class="text-xs text-slate-500 transition hover:text-indigo-300 disabled:cursor-wait"
+					title="Add this repo's open issues as to-dos"
+					disabled={importing}
+					onclick={importIssues}
+				>
+					{importing ? 'Importing…' : 'Import issues'}
+				</button>
+			{/if}
+			{#if todos.length}
+				<span class="text-xs text-slate-400">{done}/{todos.length} done</span>
+			{/if}
+		</div>
 	</div>
+
+	{#if imported !== null}
+		<p class="mb-2 px-2 text-xs text-slate-400">
+			{imported === 0
+				? 'Every open issue is already on this list.'
+				: `Imported ${imported} ${imported === 1 ? 'issue' : 'issues'}.`}
+		</p>
+	{/if}
 
 	<ul class="space-y-1.5">
 		{#each todos as todo (todo.id)}
@@ -113,6 +163,30 @@
 							>#{todo.github_issue_number}</a
 						>{/if}</span
 				>
+				{#if context(todo)}
+					<!-- What the issue carries that the sentence doesn't: who has it,
+					     what it's filed under, whether anyone is talking about it. -->
+					<span class="flex shrink-0 flex-wrap items-center gap-1.5 self-center">
+						{#each todo.github_issue_labels ?? [] as label}
+							<span
+								class="rounded-full bg-white/10 px-1.5 py-0.5 text-[10px] leading-none text-slate-300"
+								>{label}</span
+							>
+						{/each}
+						{#if todo.github_issue_assignee}
+							<span class="text-[10px] text-slate-400" title="Assigned to {todo.github_issue_assignee}"
+								>@{todo.github_issue_assignee}</span
+							>
+						{/if}
+						{#if (todo.github_issue_comments ?? 0) > 0}
+							<span
+								class="text-[10px] text-slate-500"
+								title="{todo.github_issue_comments} comments on the issue"
+								>💬 {todo.github_issue_comments}</span
+							>
+						{/if}
+					</span>
+				{/if}
 				{#if canEdit && repo && !todo.github_issue_number}
 					<button
 						type="button"

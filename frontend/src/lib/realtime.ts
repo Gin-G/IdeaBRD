@@ -1,3 +1,5 @@
+import { isNative } from './native/plugins';
+
 // Lightweight WebSocket client for live updates. Components subscribe via onRealtime();
 // the socket auto-connects on first subscription and reconnects if dropped.
 
@@ -19,6 +21,10 @@ function wsUrl(): string {
 }
 
 function connect() {
+	// The device has no server behind it — the board is a git checkout, and
+	// changes arrive by syncing rather than over a socket. Without this the app
+	// would retry a connection to itself every three seconds, forever.
+	if (isNative()) return;
 	if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING))
 		return;
 	socket = new WebSocket(wsUrl());
