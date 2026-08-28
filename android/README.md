@@ -87,8 +87,23 @@ produces an installable APK, signed with a key generated for that run — fine f
 trying it out, but Android refuses to install a build over one signed with a
 different key, so every update means uninstalling first.
 
-Keep the keystore. Losing it means the app can never be updated again, only
-republished under a new name.
+Those four secrets are set on this repository, so releases from v0.2.0 on share
+one signing identity and update in place. v0.1.0 predates the key and was signed
+with a throwaway one, so it has to be uninstalled rather than upgraded.
+
+Keep the keystore. It lives outside the repository — `.gitignore` covers `*.jks`
+— and losing it means the app can never be updated again, only republished under
+a new name.
+
+## The launcher icon
+
+`python3 scripts/make-launcher-icons.py` renders every mipmap from
+`frontend/static/IdeaBRD-logo.png`, the same file the web app serves, so the two
+can't drift. It writes an adaptive icon: the logo sized to 72dp on a 108dp
+canvas over a flat `#0f172a`, which lands just inside whatever mask the launcher
+draws — a circle on Pixel, a squircle elsewhere. The legacy `ic_launcher.png`
+and `ic_launcher_round.png` are pre-masked for anything that doesn't read the
+adaptive one. Change the logo, re-run the script, commit what it writes.
 
 ## Two kinds of repository
 
