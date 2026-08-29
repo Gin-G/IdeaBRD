@@ -95,6 +95,30 @@ Keep the keystore. It lives outside the repository — `.gitignore` covers `*.jk
 — and losing it means the app can never be updated again, only republished under
 a new name.
 
+## Running it without a phone
+
+An emulator is enough to catch the things that only break once the web app is
+inside a WebView, and it needs no hardware:
+
+```sh
+sdkmanager "emulator" "system-images;android-34;google_apis;x86_64"
+avdmanager create avd -n ideabrd -k "system-images;android-34;google_apis;x86_64" -d pixel_6
+emulator -avd ideabrd -no-window -no-audio -gpu swiftshader_indirect &
+adb wait-for-device
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb shell am start -n net.nickknows.ideabrd/.MainActivity
+adb exec-out screencap -p > screen.png
+```
+
+`adb logcat | grep Capacitor` is where the web layer's console output goes —
+`Capacitor/Console` lines are `console.log` and uncaught errors from the page,
+and they are the difference between "the app shows a blank screen" and knowing
+which request 404'd. A debug build also enables WebView debugging, so
+`chrome://inspect` reaches it.
+
+What this does not cover is JGit against a real repository over a real network:
+clone size, storage, and the background time limits a phone actually enforces.
+
 ## The launcher icon
 
 `python3 scripts/make-launcher-icons.py` renders every mipmap from

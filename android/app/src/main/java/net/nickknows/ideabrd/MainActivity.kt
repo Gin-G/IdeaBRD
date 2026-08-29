@@ -14,7 +14,12 @@ import com.getcapacitor.BridgeActivity
 class MainActivity : BridgeActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         // Registration has to happen before the bridge is built, or the web
-        // layer starts up without knowing these plugins exist.
+        // layer starts up without knowing these plugins exist. Both plugins
+        // live in this module, so `assets/capacitor.plugins.json` — the list
+        // Capacitor reads to find plugins shipped as npm packages — is empty
+        // rather than absent: without the file it logs a PluginLoadException
+        // on every launch, which reads like the cause of whatever you are
+        // actually debugging.
         registerPlugin(BoardPlugin::class.java)
         registerPlugin(AuthPlugin::class.java)
         super.onCreate(savedInstanceState)
