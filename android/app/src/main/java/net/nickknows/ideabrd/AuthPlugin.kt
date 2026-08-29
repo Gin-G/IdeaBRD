@@ -22,6 +22,13 @@ import java.util.concurrent.Executors
  * ever in the app, and the token that comes back is stored by [TokenStore],
  * encrypted under a Keystore key.
  *
+ * The device flow does need a registered OAuth app, though, and registering one
+ * means somebody's GitHub account owns it — every person signing in then sees
+ * that owner's name on the consent screen. So [signInWithToken] is the other
+ * way in: paste an access token you made yourself. It needs nothing registered
+ * anywhere, involves no third party at all, and lands in the same place — a
+ * token in [TokenStore] that git and the API both accept.
+ *
  * The token never crosses back over the bridge. The board page can ask whether
  * it is signed in and as whom, and that is all it needs to know.
  */
@@ -72,6 +79,50 @@ class AuthPlugin : Plugin() {
                 result.put("interval", code.intervalSeconds)
                 result.put("expiresIn", code.expiresInSeconds)
                 call.resolve(result)
+            } catch (e: Exception) {
+                call.reject(e.message ?: "Could not reach GitHub", e)
+            }
+        }
+    }
+
+    /**
+     * Sign in with a token the person made themselves.
+     *
+     * A personal access token is the same kind of credential the device flow
+     * ends up with, so everything downstream — git over HTTPS, the REST API —
+     * is identical. What it avoids is the registration: no OAuth app, no client
+     * id, nobody's account named on a consent screen. The cost is that the
+     * person has to go and make the token, and choose its scope correctly,
+     * which is why a classic token missing `repo` is rejected here rather than
+     * left to fail later at clone time with a git error that explains nothing.
+     */
+    @PluginMethod
+    fun signInWithToken(call: PluginCall) {
+        val context = context ?: return call.reject("No context")
+        val token = call.getString("token")?.trim().orEmpty()
+        if (token.isEmpty()) return call.reject("Paste a token first")
+        work.execute {
+            try {
+                val identity = GitHubApi.identify(token)
+                if (identity == null) {
+                    return@execute call.reject(
+                        "GitHub did not accept that token. Check it was copied whole " +
+                            "and has not expired.",
+                    )
+                }
+                // Null scopes means a fine-grained token, which doesn't declare
+                // them; only a classic token can be checked this cheaply.
+                if (identity.scopes != null && "repo" !in identity.scopes) {
+                    return@execute call.reject(
+                        "That token has no `repo` scope, so it cannot read or write the " +
+                            "board repository. Make one with `repo` ticked.",
+                    )
+                }
+                TokenStore.save(context, token, identity.login)
+                val out = JSObject()
+                out.put("authenticated", true)
+                out.put("login", identity.login)
+                call.resolve(out)
             } catch (e: Exception) {
                 call.reject(e.message ?: "Could not reach GitHub", e)
             }

@@ -19,6 +19,7 @@
 	let login = $state<string | null>(null);
 	let repo = $state('');
 	let clientId = $state('');
+	let token = $state('');
 	let needsClientId = $state(false);
 	let busy = $state(false);
 	let error = $state('');
@@ -75,6 +76,29 @@
 		}
 	}
 
+	/**
+	 * The other way in: a token the person made themselves.
+	 *
+	 * The device flow needs an OAuth app, and an OAuth app belongs to whoever
+	 * registered it — their name is on the consent screen every person sees.
+	 * A token they make on their own account skips all of that, and gives the
+	 * app exactly the same thing at the end of it.
+	 */
+	async function useToken() {
+		busy = true;
+		error = '';
+		try {
+			const status = await Auth.signInWithToken({ token: token.trim() });
+			login = status.login;
+			token = '';
+			await refresh();
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'That token was not accepted';
+		} finally {
+			busy = false;
+		}
+	}
+
 	async function useRepo() {
 		busy = true;
 		error = '';
@@ -113,24 +137,62 @@
 			This app reads and writes the board straight from git. Sign in to GitHub to give it access
 			to your repositories — the token stays on this device, encrypted by Android's keystore.
 		</p>
+		{#if !needsClientId}
+			<button class="btn-primary mt-6 w-full justify-center" onclick={signIn} disabled={busy}>
+				{busy ? 'Asking GitHub…' : 'Sign in with GitHub'}
+			</button>
+			<p class="my-4 text-xs uppercase tracking-widest text-slate-600">or</p>
+		{/if}
+
+		<div class="mt-6 rounded-lg border border-white/10 bg-white/5 p-4 text-left">
+			<p class="text-sm font-semibold text-slate-200">Use an access token</p>
+			<p class="mt-1 text-xs text-slate-400">
+				Make one at <span class="font-mono text-slate-300">github.com/settings/tokens</span> with
+				the <span class="font-mono text-slate-300">repo</span> scope. It is yours, it stays on this
+				device, and no OAuth app or other account is involved.
+			</p>
+			<input
+				class="input mt-3 w-full font-mono text-sm"
+				type="password"
+				bind:value={token}
+				placeholder="ghp_… or github_pat_…"
+				spellcheck="false"
+				autocomplete="off"
+			/>
+			<button
+				class="btn-primary mt-3 w-full justify-center"
+				onclick={useToken}
+				disabled={busy || !token.trim()}
+			>
+				{busy ? 'Checking…' : 'Use this token'}
+			</button>
+		</div>
+
 		{#if needsClientId}
-			<div class="mt-6 rounded-lg border border-white/10 bg-white/5 p-4 text-left">
-				<p class="text-xs text-slate-400">
-					This build has no GitHub client id compiled in. Paste one from an OAuth app with the
-					device flow enabled.
+			<details class="mt-4 text-left">
+				<summary class="cursor-pointer text-xs text-slate-500">
+					Sign in with an OAuth app instead
+				</summary>
+				<p class="mt-2 text-xs text-slate-400">
+					This build has no GitHub client id compiled in. Paste one from an OAuth app or GitHub
+					App with the device flow enabled.
 				</p>
 				<input
 					class="input mt-2 w-full font-mono text-sm"
 					bind:value={clientId}
 					onchange={saveClientId}
-					placeholder="Iv1.xxxxxxxxxxxx"
+					placeholder="Ov23li… or Iv23li…"
 					spellcheck="false"
 				/>
-			</div>
+				<button
+					class="btn-ghost mt-2 w-full justify-center"
+					onclick={signIn}
+					disabled={busy || !clientId.trim()}
+				>
+					{busy ? 'Asking GitHub…' : 'Sign in with GitHub'}
+				</button>
+			</details>
 		{/if}
-		<button class="btn-primary mt-6 w-full justify-center" onclick={signIn} disabled={busy || needsClientId}>
-			{busy ? 'Asking GitHub…' : 'Sign in with GitHub'}
-		</button>
 	{:else if step === 'code' && code}
 		<h1 class="text-2xl font-bold">Type this code</h1>
 		<p class="mt-2 text-sm text-slate-400">

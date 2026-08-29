@@ -81,6 +81,40 @@ object GitHubApi {
     }
 
     /** The login the token belongs to, or null if it is no longer any good. */
+    /**
+     * Who a token belongs to, and — for a classic token — what it may do.
+     *
+     * [scopes] is null for a fine-grained personal access token and for a
+     * GitHub App token: neither advertises `X-OAuth-Scopes`, because neither
+     * has scopes. Their permissions are set per repository and can only be
+     * discovered by trying, so a null here means "no opinion", not "none".
+     */
+    data class Identity(val login: String, val scopes: List<String>?)
+
+    /** Check a token and find out whose it is. Null if GitHub rejected it. */
+    fun identify(token: String): Identity? {
+        val connection = URL(USER_URL).openConnection() as HttpURLConnection
+        return try {
+            connection.setRequestProperty("Authorization", "Bearer $token")
+            connection.setRequestProperty("Accept", "application/vnd.github+json")
+            connection.setRequestProperty("User-Agent", "IdeaBRD-Android")
+            if (connection.responseCode != 200) return null
+            val scopes = connection.getHeaderField("X-OAuth-Scopes")
+                ?.split(",")
+                ?.map { it.trim() }
+                ?.filter { it.isNotEmpty() }
+            val login = JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
+                .optString("login")
+                .takeIf { it.isNotEmpty() }
+                ?: return null
+            Identity(login, scopes)
+        } catch (_: Exception) {
+            null
+        } finally {
+            connection.disconnect()
+        }
+    }
+
     fun login(token: String): String? {
         val connection = URL(USER_URL).openConnection() as HttpURLConnection
         return try {

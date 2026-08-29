@@ -64,19 +64,49 @@ to a GitHub Release.
 
 ## Signing in
 
-An app distributed to people cannot keep a client secret — whatever is in the
-APK is in everybody's APK — so the web app's redirect flow is not available
-here. It uses GitHub's **device flow** instead: the app shows a short code, you
-type it at `github.com/login/device` on whatever device is convenient, and the
-app polls until you have.
+There are two ways in, and they end in the same place: a GitHub token held by
+`TokenStore`, encrypted under a key in the Android Keystore, hardware-backed
+where the device has it. The token never crosses back over the bridge — the
+board page can ask whether it is signed in and as whom, and that is all it
+needs. Git and the REST API both take it as-is, so nothing downstream cares
+which route produced it.
 
-The token comes back to the device and is stored by `TokenStore`, encrypted
-under a key in the Android Keystore, hardware-backed where the device has it.
-It never crosses back over the bridge: the board page can ask whether it is
-signed in and as whom, and that is all it needs.
+**An access token you made yourself.** Paste a personal access token into the
+app. A classic token needs the `repo` scope (add `read:org` to create the board
+repo under an organisation); the app checks for `repo` up front rather than
+letting a clone fail later with a git error that explains nothing. A
+fine-grained token works too, but doesn't declare its scopes, so it is taken on
+trust — give it Contents and Issues read/write on the repositories concerned.
 
-Builds need a GitHub OAuth app client id (public by design). Pass it at build
-time as `IDEABRD_GITHUB_CLIENT_ID`, or paste one into the app on first run.
+This route registers nothing anywhere. It is the answer when you don't want an
+OAuth app in the picture at all: no client id, no consent screen, and no third
+account involved in somebody else's sign-in.
+
+**The device flow.** The app shows a short code, you type it at
+`github.com/login/device` on whatever device is convenient, and the app polls
+until you have. This is what an app distributed to people has instead of the
+web app's redirect flow, which needs a client secret — and whatever is in the
+APK is in everybody's APK.
+
+The device flow needs a registered client id, which is public by design and can
+be compiled in with `IDEABRD_GITHUB_CLIENT_ID` or pasted into the app. Either
+
+- an **OAuth app** (Settings → Developer settings → OAuth Apps → New OAuth App)
+  with **Enable Device Flow** ticked. Its client id looks like `Ov23li…`, or
+  `Iv1.…` if it is old. This is what the code expects: the scopes it asks for
+  (`repo read:user user:email read:org`) are OAuth scopes.
+- or a **GitHub App**, whose client id looks like `Iv23li…`. Device flow works,
+  but GitHub Apps ignore scopes — access comes from the app's declared
+  permissions and from being installed on each account or repository — so the
+  `owners`/`createRepoForIdea` paths would need rethinking before this is a
+  real option.
+
+Whichever it is, some account owns it, and its name appears on the consent
+screen every person sees. Registering it under an organisation rather than a
+personal account is the difference between "authorise IdeaBRD, owned by *a
+person*" and "owned by *the org*". Nothing about owning it grants access to the
+owner's account: each person's token is minted for them and stays on their
+device.
 
 ## Signing a release
 

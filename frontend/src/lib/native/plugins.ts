@@ -29,6 +29,11 @@ export interface AuthPlugin {
 	owners(): Promise<{ owners: { login: string; kind: 'user' | 'org' }[] }>;
 	/** Ask GitHub for a code for the person to type. Nothing is authorised yet. */
 	start(options?: { clientId?: string }): Promise<DeviceCode>;
+	/**
+	 * Sign in with an access token the person made themselves — no OAuth app,
+	 * no client id, and nobody's account on a consent screen.
+	 */
+	signInWithToken(options: { token: string }): Promise<AuthStatus>;
 	/** Resolves once they have authorised it; the token stays on the native side. */
 	poll(options: {
 		deviceCode: string;
