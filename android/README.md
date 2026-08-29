@@ -89,7 +89,9 @@ web app's redirect flow, which needs a client secret — and whatever is in the
 APK is in everybody's APK.
 
 The device flow needs a registered client id, which is public by design and can
-be compiled in with `IDEABRD_GITHUB_CLIENT_ID` or pasted into the app. Either
+be compiled in with `IDEABRD_GITHUB_CLIENT_ID` or pasted into the app. This
+repository has that secret set, pointing at the existing IdeaBRD OAuth app, so
+released builds offer both routes. Either
 
 - an **OAuth app** (Settings → Developer settings → OAuth Apps → New OAuth App)
   with **Enable Device Flow** ticked. Its client id looks like `Ov23li…`, or
