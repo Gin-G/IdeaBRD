@@ -1,6 +1,6 @@
 ---
 status: active
-progress: 90
+progress: 88
 ---
 
 # IdeaBRD
@@ -102,6 +102,7 @@ authoritative until reconciliation says the git copy has earned the swap.
 - [ ] Run the live GitHub suite against a real repo — `backend/tests/live` and a weekly workflow now exist, but nothing has actually run them until `IDEABRD_GITHUB_TOKEN` is set on the repository
 - [ ] Try the Android app on real hardware — it now runs on an emulator (see `android/README.md`), but JGit against a real repo on a real phone (clone size, storage, background time limits) has never been exercised
 - [x] Give the Android release a stable signing key, and make the launcher icon the board's own logo rather than a lightbulb drawn by hand — the four secrets are set, so releases from v0.2.0 on share one identity and upgrade in place
+- [ ] Give the app a GitHub OAuth client id — make an OAuth app with the device flow enabled and set `IDEABRD_GITHUB_CLIENT_ID` as a repository secret; until then every install asks the person to paste one in before they can sign in
 - [ ] Point a GitHub webhook at the deployment and put `webhook_secret` in OpenBao — the receiver refuses every request until the secret exists, so it is code that isn't running yet
 - [x] Read a repo-linked idea on the phone — the board repo records only where such an idea lives, so a linked tile was a link and an empty page; the app now clones that repository on request and reads and writes its own IDEA.md
 - [x] Show issue-backed to-dos properly on the phone — issues are fetched and cached for offline, the item they back takes its title and state from them, and ticking a box closes the issue
