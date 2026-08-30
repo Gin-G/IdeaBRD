@@ -21,6 +21,8 @@ export interface AuthStatus {
 	authenticated: boolean;
 	login: string | null;
 	clientIdConfigured?: boolean;
+	/** Whether an IdeaBRD server is configured to broker one-tap sign-in. */
+	serverSignInConfigured?: boolean;
 	/**
 	 * A device-flow sign-in started but not finished — the app was reclaimed
 	 * while the person was in the browser authorising it. The code is still
@@ -34,6 +36,13 @@ export interface AuthPlugin {
 	status(): Promise<AuthStatus>;
 	/** Accounts a repository could be created under: the user, plus their orgs. */
 	owners(): Promise<{ owners: { login: string; kind: 'user' | 'org' }[] }>;
+	/**
+	 * One-tap sign-in: the server runs the redirect flow and hands the result
+	 * back on an App Link. Returns the URL to open; nothing is authorised yet.
+	 */
+	serverSignIn(options?: { serverUrl?: string }): Promise<{ url: string }>;
+	/** Resolves once the App Link has come back and the token is collected. */
+	awaitServerSignIn(options?: { timeout?: number }): Promise<AuthStatus>;
 	/** Ask GitHub for a code for the person to type. Nothing is authorised yet. */
 	start(options?: { clientId?: string }): Promise<DeviceCode>;
 	/**

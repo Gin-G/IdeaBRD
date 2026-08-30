@@ -71,6 +71,34 @@ board page can ask whether it is signed in and as whom, and that is all it
 needs. Git and the REST API both take it as-is, so nothing downstream cares
 which route produced it.
 
+**One tap, brokered by the server.** The button opens GitHub in the browser,
+and once you approve it the app comes back signed in. Nothing to read off one
+screen and type into another.
+
+This works because the IdeaBRD server holds a GitHub client secret and this app
+never can — whatever ships in the APK ships to everybody. So the server runs
+GitHub's ordinary redirect flow on the app's behalf and hands the result back
+over an **Android App Link** (`/api/auth/android/return`).
+
+What crosses that link is a one-time code, never the token. Before opening the
+browser the app generates a secret, sends only its SHA-256, and proves it holds
+the original when it collects — PKCE, done by hand, because GitHub does not
+support PKCE for OAuth apps. A link that some other app managed to claim is
+therefore worth nothing, and the code is spent on first presentation whether or
+not the secret matched.
+
+Android only makes the link exclusive once it has fetched
+`https://<host>/.well-known/assetlinks.json` and matched it against the app's
+signing certificate. That file is served by the frontend (see `nginx.conf`) and
+carries the release key's fingerprint, so **a debug build will not be granted
+the link** — `adb shell pm set-app-links --package net.nickknows.ideabrd 2
+<host>` approves it by hand for local testing. Where the link is not granted,
+the browser lands on a page that says to switch back to the app.
+
+This is the only thing the phone asks a server for. The board itself is still
+read and written straight from git, so the other two routes below remain, and
+an app that cannot reach the server can still sign in and work.
+
 **An access token you made yourself.** Paste a personal access token into the
 app. A classic token needs the `repo` scope (add `read:org` to create the board
 repo under an organisation); the app checks for `repo` up front rather than

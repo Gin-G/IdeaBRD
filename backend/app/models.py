@@ -244,3 +244,33 @@ class IdeaInvitation(Base):
     )
 
     idea: Mapped[Idea] = relationship(back_populates="invitations")
+
+
+class AndroidHandoff(Base):
+    """One in-flight sign-in from the Android app, waiting to be collected.
+
+    The phone cannot hold a GitHub client secret, so the server does the OAuth
+    exchange on its behalf and the browser hands the result back through an
+    Android App Link. Putting the token in that redirect would be careless —
+    a link is a URL, and URLs end up in logs and in whatever else claims the
+    scheme — so the redirect carries only this row's code, and redeeming it
+    requires the verifier that never left the device.
+
+    That is PKCE by hand: ``challenge`` is the SHA-256 of a secret the app
+    generated, and the app proves it holds the original when it collects.
+    Rows are single-use and short-lived; nothing here is worth keeping once
+    the token has been handed over.
+    """
+
+    __tablename__ = "android_handoffs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    challenge: Mapped[str] = mapped_column(String(64))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    user: Mapped[User] = relationship()

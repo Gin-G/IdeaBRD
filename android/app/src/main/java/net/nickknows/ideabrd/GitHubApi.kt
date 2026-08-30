@@ -91,6 +91,39 @@ object GitHubApi {
      */
     data class Identity(val login: String, val scopes: List<String>?)
 
+    /** A GitHub token the server obtained on this device's behalf. */
+    data class Handoff(val token: String, val login: String?)
+
+    /**
+     * Redeem a server handoff: the one-time code that arrived on the App Link,
+     * plus the secret this device generated, for the token the server got from
+     * GitHub.
+     *
+     * The code travelled in a URL and is worth nothing on its own — the server
+     * has only the SHA-256 of the verifier until this call, and spends the code
+     * whether or not the verifier matches.
+     */
+    fun redeemHandoff(serverUrl: String, code: String, verifier: String): Handoff? {
+        val body = JSONObject().put("code", code).put("verifier", verifier).toString()
+        val connection =
+            URL("$serverUrl/api/auth/android/exchange").openConnection() as HttpURLConnection
+        return try {
+            connection.requestMethod = "POST"
+            connection.setRequestProperty("Content-Type", "application/json")
+            connection.setRequestProperty("User-Agent", "IdeaBRD-Android")
+            connection.doOutput = true
+            connection.outputStream.use { it.write(body.toByteArray()) }
+            if (connection.responseCode !in 200..299) return null
+            val json = JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
+            val token = json.optString("token").takeIf { it.isNotEmpty() } ?: return null
+            Handoff(token, json.optString("login").takeIf { it.isNotEmpty() })
+        } catch (_: Exception) {
+            null
+        } finally {
+            connection.disconnect()
+        }
+    }
+
     /** Check a token and find out whose it is. Null if GitHub rejected it. */
     fun identify(token: String): Identity? {
         val connection = URL(USER_URL).openConnection() as HttpURLConnection

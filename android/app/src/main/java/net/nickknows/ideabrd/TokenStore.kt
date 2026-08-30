@@ -37,6 +37,12 @@ object TokenStore {
     private const val KEY_DEVICE_EXPIRES = "device_expires_at"
     private const val KEY_DEVICE_INTERVAL = "device_interval"
 
+    // The secret behind a server-brokered sign-in. It never leaves the device
+    // — only its SHA-256 goes to the server — and it has to outlive the app
+    // being reclaimed while the browser is in front, so it lives here with
+    // everything else worth encrypting.
+    private const val KEY_VERIFIER = "handoff_verifier"
+
     private fun prefs(context: Context): SharedPreferences {
         val key = MasterKey.Builder(context)
             .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
@@ -60,6 +66,16 @@ object TokenStore {
 
     fun clear(context: Context) {
         prefs(context).edit().clear().apply()
+    }
+
+    fun saveVerifier(context: Context, verifier: String) {
+        prefs(context).edit().putString(KEY_VERIFIER, verifier).apply()
+    }
+
+    fun verifier(context: Context): String? = prefs(context).getString(KEY_VERIFIER, null)
+
+    fun clearVerifier(context: Context) {
+        prefs(context).edit().remove(KEY_VERIFIER).apply()
     }
 
     /** A device-flow sign-in waiting on the person to type the code. */

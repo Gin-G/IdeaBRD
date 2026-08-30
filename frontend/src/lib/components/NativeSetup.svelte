@@ -14,13 +14,14 @@
 	 */
 	let { oncomplete }: { oncomplete: () => void } = $props();
 
-	let step = $state<'checking' | 'signin' | 'code' | 'repo'>('checking');
+	let step = $state<'checking' | 'signin' | 'server' | 'code' | 'repo'>('checking');
 	let code = $state<DeviceCode | null>(null);
 	let login = $state<string | null>(null);
 	let repo = $state('');
 	let clientId = $state('');
 	let token = $state('');
 	let needsClientId = $state(false);
+	let oneTap = $state(false);
 	let busy = $state(false);
 	let error = $state('');
 	let copied = $state(false);
@@ -40,6 +41,7 @@
 		const status = await Auth.status();
 		login = status.login;
 		needsClientId = status.clientIdConfigured === false && !clientId;
+		oneTap = status.serverSignInConfigured === true;
 		if (!status.authenticated) {
 			// Finishing the device flow means leaving the app, and Android is
 			// free to reclaim the app while you are gone. Coming back to the
@@ -67,6 +69,30 @@
 			return;
 		}
 		oncomplete();
+	}
+
+	/**
+	 * One tap: the server holds the client secret this app cannot, so it runs
+	 * GitHub's ordinary redirect flow and hands the result back on an App Link.
+	 * Nothing to read off one screen and type into another.
+	 */
+	async function signInWithServer() {
+		busy = true;
+		error = '';
+		try {
+			const { url } = await Auth.serverSignIn();
+			step = 'server';
+			window.open(url, '_blank');
+			const status = await Auth.awaitServerSignIn({ timeout: 600 });
+			login = status.login;
+			await refresh();
+		} catch (e) {
+			if ((e as { code?: string })?.code === 'SUPERSEDED') return;
+			error = e instanceof Error ? e.message : 'Sign-in failed';
+			step = 'signin';
+		} finally {
+			busy = false;
+		}
 	}
 
 	async function signIn() {
@@ -205,7 +231,18 @@
 			This app reads and writes the board straight from git. Sign in to GitHub to give it access
 			to your repositories — the token stays on this device, encrypted by Android's keystore.
 		</p>
-		{#if !needsClientId}
+		{#if oneTap}
+			<button
+				class="btn-primary mt-6 w-full justify-center"
+				onclick={signInWithServer}
+				disabled={busy}
+			>
+				{busy ? 'Opening GitHub…' : 'Sign in with GitHub'}
+			</button>
+			<p class="mt-2 text-xs text-slate-500">
+				Opens GitHub in your browser and comes straight back. Nothing to type.
+			</p>
+		{:else if !needsClientId}
 			<button class="btn-primary mt-6 w-full justify-center" onclick={signIn} disabled={busy}>
 				{busy ? 'Asking GitHub…' : 'Sign in with GitHub'}
 			</button>
@@ -240,6 +277,12 @@
 			</button>
 		</div>
 
+		{#if oneTap && !needsClientId}
+			<button class="mt-4 block w-full text-xs text-slate-500 underline" onclick={signIn}>
+				Sign in with a typed code instead
+			</button>
+		{/if}
+
 		{#if needsClientId}
 			<details class="mt-4 text-left">
 				<summary class="cursor-pointer text-xs text-slate-500">
@@ -265,6 +308,18 @@
 				</button>
 			</details>
 		{/if}
+	{:else if step === 'server'}
+		<h1 class="text-2xl font-bold">Waiting for GitHub</h1>
+		<p class="mt-2 text-sm text-slate-400">
+			Approve the sign-in in your browser. This comes back on its own — you can leave the
+			app and return.
+		</p>
+		<div class="flex justify-center py-10">
+			<div class="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-indigo-400"></div>
+		</div>
+		<button class="text-xs text-slate-500 underline" onclick={() => (step = 'signin')}>
+			Back
+		</button>
 	{:else if step === 'code' && code}
 		<h1 class="text-2xl font-bold">Type this code</h1>
 		<p class="mt-2 text-sm text-slate-400">

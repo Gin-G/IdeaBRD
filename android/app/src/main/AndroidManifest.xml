@@ -25,6 +25,22 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!-- Where the server sends the browser once GitHub has said yes.
+                 autoVerify makes Android check
+                 https://<host>/.well-known/assetlinks.json against this app's
+                 signing certificate; once it matches, this link opens the app
+                 directly and no other app can claim it. Until it does, the
+                 link opens in a browser and the page there says so. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="${ideabrdHost}"
+                    android:pathPrefix="/api/auth/android/return" />
+            </intent-filter>
         </activity>
 
         <provider

@@ -1,14 +1,18 @@
 package net.nickknows.ideabrd
 
 import android.content.ClipData
+import android.content.Intent
 import android.content.ClipboardManager
 import android.content.Context
+import android.util.Base64
 import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
+import java.security.MessageDigest
+import java.security.SecureRandom
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 
@@ -44,7 +48,11 @@ class AuthPlugin : Plugin() {
     // identity to show who is signed in.
     private val scope = "repo read:user user:email read:org"
 
-    private val work = Executors.newSingleThreadExecutor()
+    // A pool, not a single thread: waiting for a sign-in occupies a thread for
+    // as long as the person takes, and the work that ends that wait — redeeming
+    // the App Link, polling for the code — has to be able to run meanwhile. On
+    // one thread the waiter blocks its own completion and the app spins forever.
+    private val work = Executors.newCachedThreadPool()
 
     @Volatile private var polling = false
 
@@ -53,6 +61,9 @@ class AuthPlugin : Plugin() {
     // below — until the old code expires a quarter of an hour later.
     @Volatile private var pollTask: Future<*>? = null
 
+    // Why the last App Link handoff failed, for the waiter to report.
+    @Volatile private var handoff: String? = null
+
     @PluginMethod
     fun status(call: PluginCall) {
         val context = context ?: return call.reject("No context")
@@ -60,6 +71,7 @@ class AuthPlugin : Plugin() {
         result.put("authenticated", TokenStore.token(context) != null)
         result.put("login", TokenStore.login(context))
         result.put("clientIdConfigured", clientId(call).isNotEmpty())
+        result.put("serverSignInConfigured", serverUrl(call).isNotEmpty())
         // A sign-in the person started before the app was reclaimed. Telling
         // the page about it is what lets it put the same code back on screen
         // and go on waiting, instead of starting over with a new one and
@@ -229,6 +241,102 @@ class AuthPlugin : Plugin() {
         }
     }
 
+
+    // ---- One-tap sign-in, brokered by the IdeaBRD server ----
+    //
+    // The device flow exists because this app cannot hold a client secret. The
+    // server can, so it runs the ordinary redirect flow instead and hands the
+    // result back on an App Link. What crosses that link is a one-time code,
+    // not the token: the app generates a secret, sends only its SHA-256 to the
+    // server up front, and proves possession when it collects. That is PKCE,
+    // and it means a link claimed by some other app is worth nothing.
+
+    /** Make a sign-in and return the URL to open. Nothing is authorised yet. */
+    @PluginMethod
+    fun serverSignIn(call: PluginCall) {
+        val context = context ?: return call.reject("No context")
+        val server = serverUrl(call)
+        if (server.isEmpty()) {
+            return call.reject("No IdeaBRD server configured for one-tap sign-in")
+        }
+        val verifier = ByteArray(32).also { SecureRandom().nextBytes(it) }
+            .let { Base64.encodeToString(it, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP) }
+        val challenge = MessageDigest.getInstance("SHA-256").digest(verifier.toByteArray())
+            .let { Base64.encodeToString(it, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP) }
+        TokenStore.saveVerifier(context, verifier)
+        handoff = null
+        val result = JSObject()
+        result.put("url", "$server/api/auth/android/start?challenge=$challenge")
+        call.resolve(result)
+    }
+
+    /**
+     * Wait for the App Link to come back and the token to be collected.
+     *
+     * Resolves as soon as the exchange has happened — including when it
+     * happened before this was called, which is the case after the app was
+     * reclaimed while the browser had the foreground.
+     */
+    @PluginMethod
+    fun awaitServerSignIn(call: PluginCall) {
+        val context = context ?: return call.reject("No context")
+        val deadline = System.currentTimeMillis() + (call.getInt("timeout") ?: 600) * 1000L
+        work.execute {
+            try {
+                while (System.currentTimeMillis() < deadline) {
+                    TokenStore.token(context)?.let {
+                        val out = JSObject()
+                        out.put("authenticated", true)
+                        out.put("login", TokenStore.login(context))
+                        return@execute call.resolve(out)
+                    }
+                    handoff?.let { return@execute call.reject(it) }
+                    Thread.sleep(500)
+                }
+                call.reject("Timed out waiting for GitHub")
+            } catch (e: InterruptedException) {
+                call.reject("Sign-in was replaced", "SUPERSEDED")
+            }
+        }
+    }
+
+    /** The App Link, arriving while the app is already running. */
+    override fun handleOnNewIntent(intent: Intent) {
+        super.handleOnNewIntent(intent)
+        collect(intent)
+    }
+
+    /** The App Link that started the app from cold. */
+    override fun handleOnStart() {
+        super.handleOnStart()
+        collect(activity?.intent)
+    }
+
+    private fun collect(intent: Intent?) {
+        val data = intent?.data ?: return
+        if (data.path != "/api/auth/android/return") return
+        val code = data.getQueryParameter("code") ?: return
+        // Consumed: a launch intent is handed back on every resume, and
+        // redeeming twice would spend a code that is already gone.
+        intent.data = null
+        val context = context ?: return
+        val server = serverUrl(null)
+        work.execute {
+            val verifier = TokenStore.verifier(context)
+            if (verifier == null) {
+                handoff = "This device did not start that sign-in"
+                return@execute
+            }
+            val result = GitHubApi.redeemHandoff(server, code, verifier)
+            if (result == null) {
+                handoff = "The server would not complete that sign-in"
+                return@execute
+            }
+            TokenStore.save(context, result.token, result.login ?: GitHubApi.login(result.token))
+            TokenStore.clearVerifier(context)
+        }
+    }
+
     /** Give up on the code in progress, so the next attempt starts clean. */
     @PluginMethod
     fun cancelSignIn(call: PluginCall) {
@@ -291,6 +399,9 @@ class AuthPlugin : Plugin() {
         TokenStore.clear(context)
         call.resolve()
     }
+
+    private fun serverUrl(call: PluginCall?): String =
+        call?.getString("serverUrl")?.takeIf { it.isNotEmpty() } ?: BuildConfig.SERVER_URL
 
     private fun clientId(call: PluginCall): String =
         call.getString("clientId")?.takeIf { it.isNotEmpty() } ?: BuildConfig.GITHUB_CLIENT_ID

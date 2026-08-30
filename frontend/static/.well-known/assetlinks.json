@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "net.nickknows.ideabrd",
+      "sha256_cert_fingerprints": [
+        "67:94:1E:5E:69:83:D8:A2:F6:32:39:9E:82:4A:DA:8E:1D:EF:B8:59:F8:EF:B4:79:5E:60:EE:46:E7:5A:5C:62"
+      ]
+    }
+  }
+]

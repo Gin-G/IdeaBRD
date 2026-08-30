@@ -30,6 +30,16 @@ android {
             "GITHUB_CLIENT_ID",
             "\"${System.getenv("IDEABRD_GITHUB_CLIENT_ID") ?: ""}\"",
         )
+
+        // The IdeaBRD server, which holds the GitHub client secret the app
+        // cannot. It brokers the one-tap sign-in and nothing else: the board
+        // itself is still read and written straight from git, so an app with
+        // no server reachable simply falls back to the other two routes.
+        val host = System.getenv("IDEABRD_HOST") ?: "ideabrd.nickknows.net"
+        buildConfigField("String", "SERVER_URL", "\"https://$host\"")
+        // The App Link the server redirects to when the sign-in is done. It
+        // has to match the intent filter, so both come from here.
+        manifestPlaceholders["ideabrdHost"] = host
     }
 
     signingConfigs {
@@ -150,6 +160,12 @@ abstract class VerifyWebAssetsTask : DefaultTask() {
         val expected = source.walkTopDown()
             .filter { it.isFile }
             .map { it.relativeTo(source).invariantSeparatorsPath }
+            // `cap copy` brings across everything the web build produced,
+            // including files that are for the web server rather than the
+            // WebView — /.well-known/assetlinks.json, which Android fetches
+            // over the network, not out of the APK. AGP drops dot-directories
+            // and it is right to; the page never asks for them.
+            .filterNot { it.split("/").any { part -> part.startsWith(".") } }
             .toSortedSet()
 
         val apk = apkDirectory.get().asFile.walkTopDown().firstOrNull { it.extension == "apk" }
