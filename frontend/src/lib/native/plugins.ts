@@ -21,6 +21,13 @@ export interface AuthStatus {
 	authenticated: boolean;
 	login: string | null;
 	clientIdConfigured?: boolean;
+	/**
+	 * A device-flow sign-in started but not finished — the app was reclaimed
+	 * while the person was in the browser authorising it. The code is still
+	 * good, so the page shows it again and goes on waiting.
+	 */
+	pendingUserCode?: string;
+	pendingExpiresIn?: number;
 }
 
 export interface AuthPlugin {
@@ -35,12 +42,16 @@ export interface AuthPlugin {
 	 */
 	signInWithToken(options: { token: string }): Promise<AuthStatus>;
 	/** Resolves once they have authorised it; the token stays on the native side. */
+	/** Omit `deviceCode` to resume the sign-in already in progress. */
 	poll(options: {
-		deviceCode: string;
-		interval: number;
-		expiresIn: number;
+		deviceCode?: string;
+		interval?: number;
+		expiresIn?: number;
 		clientId?: string;
 	}): Promise<AuthStatus>;
+	/** Abandon the code in progress, stopping the poll waiting on it. */
+	cancelSignIn(): Promise<void>;
+	copyToClipboard(options: { text: string }): Promise<void>;
 	signOut(): Promise<void>;
 }
 

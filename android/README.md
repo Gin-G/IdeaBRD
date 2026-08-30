@@ -84,7 +84,16 @@ account involved in somebody else's sign-in.
 
 **The device flow.** The app shows a short code, you type it at
 `github.com/login/device` on whatever device is convenient, and the app polls
-until you have. This is what an app distributed to people has instead of the
+until you have. The code can be copied in one tap, and "Copy code and open
+GitHub" passes it as `?user_code=` so the field arrives filled in.
+
+Finishing this means leaving the app, and Android is free to reclaim a
+backgrounded app while you are away in the browser. So the code in flight is
+kept in `TokenStore` alongside the token: coming back to an app that was killed
+puts the same code back on screen and polls once immediately, which redeems a
+grant that was authorised while it was gone. Without that the app returns to the
+sign-in screen having forgotten everything, while GitHub holds an authorisation
+nobody will ever collect — which is exactly what it did before v0.3.2. This is what an app distributed to people has instead of the
 web app's redirect flow, which needs a client secret — and whatever is in the
 APK is in everybody's APK.
 

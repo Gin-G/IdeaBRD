@@ -23,6 +23,7 @@
 	let needsClientId = $state(false);
 	let busy = $state(false);
 	let error = $state('');
+	let copied = $state(false);
 
 	const CLIENT_ID_KEY = 'ideabrd.clientId';
 
@@ -40,6 +41,22 @@
 		login = status.login;
 		needsClientId = status.clientIdConfigured === false && !clientId;
 		if (!status.authenticated) {
+			// Finishing the device flow means leaving the app, and Android is
+			// free to reclaim the app while you are gone. Coming back to the
+			// sign-in screen would strand a code you had already authorised,
+			// so an unfinished one is put back on screen and waited on again.
+			if (status.pendingUserCode) {
+				code = {
+					deviceCode: '',
+					userCode: status.pendingUserCode,
+					verificationUri: 'https://github.com/login/device',
+					interval: 5,
+					expiresIn: status.pendingExpiresIn ?? 900
+				};
+				step = 'code';
+				void waitForCode();
+				return;
+			}
 			step = 'signin';
 			return;
 		}
@@ -58,22 +75,59 @@
 		try {
 			code = await Auth.start(clientId ? { clientId } : undefined);
 			step = 'code';
-			// Polling blocks until the person authorises the code or it expires,
-			// which is the whole of the waiting in this flow.
-			const status = await Auth.poll({
+			await waitForCode({
 				deviceCode: code.deviceCode,
 				interval: code.interval,
-				expiresIn: code.expiresIn,
-				...(clientId ? { clientId } : {})
+				expiresIn: code.expiresIn
 			});
-			login = status.login;
-			await refresh();
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Sign-in failed';
 			step = 'signin';
 		} finally {
 			busy = false;
 		}
+	}
+
+	/**
+	 * Wait for the code to be authorised. With no argument this resumes
+	 * whatever the native side already has, which is how a sign-in survives
+	 * the app being reclaimed mid-flow.
+	 */
+	async function waitForCode(started?: {
+		deviceCode: string;
+		interval: number;
+		expiresIn: number;
+	}) {
+		try {
+			const status = await Auth.poll({ ...(started ?? {}), ...(clientId ? { clientId } : {}) });
+			login = status.login;
+			await refresh();
+		} catch (e) {
+			// A newer sign-in replaced this one; whoever started that is now in
+			// charge of the screen, so this should say nothing.
+			if ((e as { code?: string })?.code === 'SUPERSEDED') return;
+			error = e instanceof Error ? e.message : 'Sign-in failed';
+			step = 'signin';
+		}
+	}
+
+	async function copyCode() {
+		if (!code) return;
+		try {
+			await Auth.copyToClipboard({ text: code.userCode });
+			copied = true;
+			setTimeout(() => (copied = false), 2000);
+		} catch {
+			/* the code is on screen to select by hand either way */
+		}
+	}
+
+	/** Give up on this code and go back, rather than waiting out its 15 minutes. */
+	async function startOver() {
+		await Auth.cancelSignIn();
+		code = null;
+		error = '';
+		step = 'signin';
 	}
 
 	/**
@@ -121,8 +175,13 @@
 		needsClientId = !clientId.trim();
 	}
 
-	function openVerification() {
-		if (code) window.open(code.verificationUri, '_blank');
+	async function openVerification() {
+		if (!code) return;
+		// Copy first: whether or not GitHub prefills the field, one paste beats
+		// long-pressing eight characters out of a web page on a phone.
+		await copyCode();
+		const url = `${code.verificationUri}?user_code=${encodeURIComponent(code.userCode)}`;
+		window.open(url, '_blank');
 	}
 </script>
 
@@ -199,13 +258,25 @@
 			Open <span class="font-mono text-slate-300">{code.verificationUri}</span> on any device and
 			enter:
 		</p>
-		<p class="my-6 select-all font-mono text-3xl font-bold tracking-[0.3em] text-indigo-300">
+		<button
+			class="my-6 w-full select-all rounded-lg border border-white/10 bg-white/5 py-4 font-mono text-3xl font-bold tracking-[0.3em] text-indigo-300"
+			onclick={copyCode}
+			title="Copy the code"
+		>
 			{code.userCode}
-		</p>
-		<button class="btn-ghost w-full justify-center" onclick={openVerification}>
-			Open GitHub
 		</button>
-		<p class="mt-4 text-xs text-slate-500">Waiting for you to authorise the code…</p>
+		<button class="btn-primary w-full justify-center" onclick={openVerification}>
+			Copy code and open GitHub
+		</button>
+		<button class="btn-ghost mt-2 w-full justify-center" onclick={copyCode}>
+			{copied ? 'Copied' : 'Copy code'}
+		</button>
+		<p class="mt-4 text-xs text-slate-500">
+			Waiting for you to authorise the code… you can leave the app and come back.
+		</p>
+		<button class="mt-4 text-xs text-slate-500 underline" onclick={startOver}>
+			Start again with a new code
+		</button>
 	{:else if step === 'repo'}
 		<h1 class="text-2xl font-bold">Which board?</h1>
 		<p class="mt-2 text-sm text-slate-400">

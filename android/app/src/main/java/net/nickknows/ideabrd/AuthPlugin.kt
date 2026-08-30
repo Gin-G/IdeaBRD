@@ -1,5 +1,8 @@
 package net.nickknows.ideabrd
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
@@ -7,6 +10,7 @@ import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
 
 /**
  * Signing in to GitHub from the device, with the device flow.
@@ -44,6 +48,11 @@ class AuthPlugin : Plugin() {
 
     @Volatile private var polling = false
 
+    // The poll in flight, so that starting or abandoning a sign-in can stop it
+    // rather than leaving it to hold the single worker thread — and the guard
+    // below — until the old code expires a quarter of an hour later.
+    @Volatile private var pollTask: Future<*>? = null
+
     @PluginMethod
     fun status(call: PluginCall) {
         val context = context ?: return call.reject("No context")
@@ -51,6 +60,14 @@ class AuthPlugin : Plugin() {
         result.put("authenticated", TokenStore.token(context) != null)
         result.put("login", TokenStore.login(context))
         result.put("clientIdConfigured", clientId(call).isNotEmpty())
+        // A sign-in the person started before the app was reclaimed. Telling
+        // the page about it is what lets it put the same code back on screen
+        // and go on waiting, instead of starting over with a new one and
+        // stranding whatever they already authorised.
+        TokenStore.pending(context)?.let {
+            result.put("pendingUserCode", it.userCode)
+            result.put("pendingExpiresIn", ((it.expiresAt - System.currentTimeMillis()) / 1000).toInt())
+        }
         call.resolve(result)
     }
 
@@ -62,6 +79,9 @@ class AuthPlugin : Plugin() {
      */
     @PluginMethod
     fun start(call: PluginCall) {
+        val context = context ?: return call.reject("No context")
+        // A new code abandons whatever was being waited on.
+        pollTask?.cancel(true)
         val id = clientId(call)
         if (id.isEmpty()) {
             return call.reject(
@@ -72,6 +92,15 @@ class AuthPlugin : Plugin() {
         work.execute {
             try {
                 val code = GitHubApi.requestDeviceCode(id, scope)
+                TokenStore.savePending(
+                    context,
+                    TokenStore.Pending(
+                        deviceCode = code.deviceCode,
+                        userCode = code.userCode,
+                        expiresAt = System.currentTimeMillis() + code.expiresInSeconds * 1000L,
+                        interval = code.intervalSeconds,
+                    ),
+                )
                 val result = JSObject()
                 result.put("deviceCode", code.deviceCode)
                 result.put("userCode", code.userCode)
@@ -140,40 +169,90 @@ class AuthPlugin : Plugin() {
     fun poll(call: PluginCall) {
         val context = context ?: return call.reject("No context")
         val id = clientId(call)
+
+        // Called with no device code, this resumes the sign-in already in
+        // progress. That is the ordinary case after the app has been reclaimed:
+        // the person is coming back from the browser, the grant may already be
+        // waiting at GitHub, and asking for a fresh code here would abandon it.
+        val stored = TokenStore.pending(context)
+        val resuming = call.getString("deviceCode") == null
         val deviceCode = call.getString("deviceCode")
-            ?: return call.reject("deviceCode is required")
-        var interval = call.getInt("interval") ?: 5
-        val deadline = System.currentTimeMillis() + (call.getInt("expiresIn") ?: 900) * 1000L
+            ?: stored?.deviceCode
+            ?: return call.reject("No sign-in is in progress")
+        var interval = call.getInt("interval") ?: stored?.interval ?: 5
+        val deadline = call.getInt("expiresIn")
+            ?.let { System.currentTimeMillis() + it * 1000L }
+            ?: stored?.expiresAt
+            ?: (System.currentTimeMillis() + 900_000L)
 
         if (polling) return call.reject("Already waiting for a code")
         polling = true
-        work.execute {
+        pollTask = work.submit {
             try {
+                // Resuming polls at once: the whole point is to redeem a grant
+                // that may already be sitting there. A fresh code waits first,
+                // because nobody can have typed it yet.
+                var immediate = resuming
                 while (System.currentTimeMillis() < deadline) {
-                    Thread.sleep(interval * 1000L)
+                    if (!immediate) Thread.sleep(interval * 1000L)
+                    immediate = false
                     when (val result = GitHubApi.pollForToken(id, deviceCode, interval)) {
                         is GitHubApi.TokenResult.Granted -> {
                             val login = GitHubApi.login(result.token)
                             TokenStore.save(context, result.token, login)
+                            TokenStore.clearPending(context)
                             val out = JSObject()
                             out.put("authenticated", true)
                             out.put("login", login)
-                            return@execute call.resolve(out)
+                            return@submit call.resolve(out)
                         }
                         is GitHubApi.TokenResult.Pending -> interval = result.interval
-                        is GitHubApi.TokenResult.Failed ->
-                            return@execute call.reject(result.error)
+                        is GitHubApi.TokenResult.Failed -> {
+                            TokenStore.clearPending(context)
+                            return@submit call.reject(result.error)
+                        }
                     }
                 }
+                TokenStore.clearPending(context)
                 call.reject("The code expired before it was authorised")
             } catch (e: InterruptedException) {
-                call.reject("Sign-in was interrupted")
+                // Superseded by a newer sign-in, or abandoned. The page that
+                // started this one has already moved on, so this is reported
+                // with a code it knows to ignore rather than as an error to
+                // put in front of somebody.
+                call.reject("Sign-in was replaced", "SUPERSEDED")
             } catch (e: Exception) {
                 call.reject(e.message ?: "Sign-in failed", e)
             } finally {
                 polling = false
             }
         }
+    }
+
+    /** Give up on the code in progress, so the next attempt starts clean. */
+    @PluginMethod
+    fun cancelSignIn(call: PluginCall) {
+        val context = context ?: return call.reject("No context")
+        pollTask?.cancel(true)
+        TokenStore.clearPending(context)
+        call.resolve()
+    }
+
+    /**
+     * Put the user code on the clipboard.
+     *
+     * Selecting eight characters out of a web page by long-press, on a phone,
+     * to paste into a browser, is the worst part of this flow. Doing it here
+     * rather than through the page's clipboard API means it works regardless
+     * of what the WebView allows.
+     */
+    @PluginMethod
+    fun copyToClipboard(call: PluginCall) {
+        val context = context ?: return call.reject("No context")
+        val text = call.getString("text") ?: return call.reject("text is required")
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("IdeaBRD sign-in code", text))
+        call.resolve()
     }
 
     /**
