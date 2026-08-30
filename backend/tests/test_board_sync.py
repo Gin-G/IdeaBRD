@@ -76,7 +76,12 @@ async def test_a_burst_of_edits_is_one_commit(users, make_client, monkeypatch):
     """Dragging a tile is a dozen mutations; it should not be a dozen commits."""
     from app.db import SessionLocal
 
-    monkeypatch.setattr(dualwrite, "DEBOUNCE_SECONDS", 0.05)
+    # The window has to outlast the burst, or the thing being tested cannot
+    # happen: four requests through the app take longer than 50ms on a loaded
+    # CI runner, and the worker then publishes partway through and commits
+    # more than once. A second is far more than the burst needs and still
+    # far less than the real 2s default.
+    monkeypatch.setattr(dualwrite, "DEBOUNCE_SECONDS", 1.0)
     repo = FakeRepo()
     repo.install(respx.mock)
     async with SessionLocal() as s:
