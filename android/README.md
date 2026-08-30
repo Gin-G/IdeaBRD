@@ -84,8 +84,15 @@ account involved in somebody else's sign-in.
 
 **The device flow.** The app shows a short code, you type it at
 `github.com/login/device` on whatever device is convenient, and the app polls
-until you have. The code can be copied in one tap, and "Copy code and open
-GitHub" passes it as `?user_code=` so the field arrives filled in.
+until you have.
+
+Be warned that GitHub's page takes one character per box and ignores a paste
+([cli/cli#5886](https://github.com/cli/cli/issues/5886)), and GitHub documents no
+way to pass the code in the URL — `verification_uri_complete`, which the spec
+has for exactly this, is not among the fields it returns. So on a phone, where
+the browser is the same device, the eight characters have to be typed. The app
+says so rather than offering a copy button that looks like it should help, and
+points at the token route, which is one paste into a field we control.
 
 Finishing this means leaving the app, and Android is free to reclaim a
 backgrounded app while you are away in the browser. So the code in flight is

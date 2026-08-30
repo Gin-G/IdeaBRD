@@ -177,11 +177,20 @@
 
 	async function openVerification() {
 		if (!code) return;
-		// Copy first: whether or not GitHub prefills the field, one paste beats
-		// long-pressing eight characters out of a web page on a phone.
+		// Copied for the case the device flow is actually built for — authorising
+		// from a different machine. On this phone it will have to be typed:
+		// GitHub's page takes one character per box and ignores a paste, and
+		// there is no documented way to pass the code in the URL.
 		await copyCode();
-		const url = `${code.verificationUri}?user_code=${encodeURIComponent(code.userCode)}`;
-		window.open(url, '_blank');
+		window.open(code.verificationUri, '_blank');
+	}
+
+	/** Abandon the code and take the route that needs no typing. */
+	async function useTokenInstead() {
+		await Auth.cancelSignIn();
+		code = null;
+		error = '';
+		step = 'signin';
 	}
 </script>
 
@@ -200,6 +209,10 @@
 			<button class="btn-primary mt-6 w-full justify-center" onclick={signIn} disabled={busy}>
 				{busy ? 'Asking GitHub…' : 'Sign in with GitHub'}
 			</button>
+			<p class="mt-2 text-xs text-slate-500">
+				GitHub shows a box per character and won't take a paste, so this means typing an
+				eight-character code.
+			</p>
 			<p class="my-4 text-xs uppercase tracking-widest text-slate-600">or</p>
 		{/if}
 
@@ -265,8 +278,12 @@
 		>
 			{code.userCode}
 		</button>
-		<button class="btn-primary w-full justify-center" onclick={openVerification}>
-			Copy code and open GitHub
+		<p class="text-xs text-slate-500">
+			GitHub's page takes one character per box and ignores a paste, so this has to be typed
+			in. Copying helps only if you are authorising from another device.
+		</p>
+		<button class="btn-primary mt-4 w-full justify-center" onclick={openVerification}>
+			Open GitHub
 		</button>
 		<button class="btn-ghost mt-2 w-full justify-center" onclick={copyCode}>
 			{copied ? 'Copied' : 'Copy code'}
@@ -274,7 +291,10 @@
 		<p class="mt-4 text-xs text-slate-500">
 			Waiting for you to authorise the code… you can leave the app and come back.
 		</p>
-		<button class="mt-4 text-xs text-slate-500 underline" onclick={startOver}>
+		<button class="mt-4 block w-full text-xs text-indigo-300 underline" onclick={useTokenInstead}>
+			Rather not type it? Use an access token instead
+		</button>
+		<button class="mt-2 block w-full text-xs text-slate-500 underline" onclick={startOver}>
 			Start again with a new code
 		</button>
 	{:else if step === 'repo'}
