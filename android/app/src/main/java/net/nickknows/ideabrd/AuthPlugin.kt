@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.ClipboardManager
 import android.content.Context
 import android.util.Base64
+import java.io.IOException
 import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
@@ -205,10 +206,27 @@ class AuthPlugin : Plugin() {
                 // that may already be sitting there. A fresh code waits first,
                 // because nobody can have typed it yet.
                 var immediate = resuming
+                var unreachable = false
                 while (System.currentTimeMillis() < deadline) {
                     if (!immediate) Thread.sleep(interval * 1000L)
                     immediate = false
-                    when (val result = GitHubApi.pollForToken(id, deviceCode, interval)) {
+                    val polled =
+                        try {
+                            GitHubApi.pollForToken(id, deviceCode, interval)
+                        } catch (e: IOException) {
+                            // A phone loses the network constantly — switching
+                            // apps, leaving wifi, a battery saver cutting
+                            // background traffic, DNS simply not answering. None
+                            // of that means the sign-in failed: the code is good
+                            // until it expires and GitHub is still holding it.
+                            // Throwing the whole attempt away over one request
+                            // is how "Unable to resolve host github.com" ended a
+                            // sign-in that was otherwise fine.
+                            unreachable = true
+                            continue
+                        }
+                    unreachable = false
+                    when (val result = polled) {
                         is GitHubApi.TokenResult.Granted -> {
                             val login = GitHubApi.login(result.token)
                             TokenStore.save(context, result.token, login)
@@ -226,7 +244,13 @@ class AuthPlugin : Plugin() {
                     }
                 }
                 TokenStore.clearPending(context)
-                call.reject("The code expired before it was authorised")
+                call.reject(
+                    if (unreachable) {
+                        "Could not reach GitHub. Check the connection and sign in again."
+                    } else {
+                        "The code expired before it was authorised"
+                    },
+                )
             } catch (e: InterruptedException) {
                 // Superseded by a newer sign-in, or abandoned. The page that
                 // started this one has already moved on, so this is reported
@@ -327,13 +351,30 @@ class AuthPlugin : Plugin() {
                 handoff = "This device did not start that sign-in"
                 return@execute
             }
-            val result = GitHubApi.redeemHandoff(server, code, verifier)
-            if (result == null) {
-                handoff = "The server would not complete that sign-in"
-                return@execute
+            // Only a request that never arrived is worth repeating: the server
+            // spends the code the moment it is presented, so retrying one it
+            // already answered would trade a lost response for a lost sign-in.
+            var result: GitHubApi.HandoffResult = GitHubApi.HandoffResult.Unreachable
+            var attempt = 0
+            while (result is GitHubApi.HandoffResult.Unreachable && attempt < 4) {
+                if (attempt > 0) Thread.sleep(1500L)
+                result = GitHubApi.redeemHandoff(server, code, verifier)
+                attempt++
             }
-            TokenStore.save(context, result.token, result.login ?: GitHubApi.login(result.token))
-            TokenStore.clearVerifier(context)
+            when (val outcome = result) {
+                is GitHubApi.HandoffResult.Ok -> {
+                    TokenStore.save(
+                        context,
+                        outcome.token,
+                        outcome.login ?: GitHubApi.login(outcome.token),
+                    )
+                    TokenStore.clearVerifier(context)
+                }
+                is GitHubApi.HandoffResult.Refused ->
+                    handoff = "The server would not complete that sign-in"
+                GitHubApi.HandoffResult.Unreachable ->
+                    handoff = "Could not reach the IdeaBRD server. Check the connection."
+            }
         }
     }
 

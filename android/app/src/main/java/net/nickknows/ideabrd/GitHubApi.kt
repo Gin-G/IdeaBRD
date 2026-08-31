@@ -1,5 +1,6 @@
 package net.nickknows.ideabrd
 
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import net.nickknows.ideabrd.core.IssueInfo
@@ -91,8 +92,23 @@ object GitHubApi {
      */
     data class Identity(val login: String, val scopes: List<String>?)
 
-    /** A GitHub token the server obtained on this device's behalf. */
-    data class Handoff(val token: String, val login: String?)
+    /** What came of presenting a handoff code to the server. */
+    sealed interface HandoffResult {
+        data class Ok(val token: String, val login: String?) : HandoffResult
+
+        /** The server answered and said no. The code is spent; retrying cannot help. */
+        data class Refused(val status: Int) : HandoffResult
+
+        /**
+         * No answer at all — DNS, no route, a dropped connection.
+         *
+         * Worth distinguishing, because the server spends a code the moment it
+         * is presented. A request that never arrived can safely be repeated; a
+         * request that was answered must not be, or a lost response turns into
+         * a lost sign-in on the retry.
+         */
+        data object Unreachable : HandoffResult
+    }
 
     /**
      * Redeem a server handoff: the one-time code that arrived on the App Link,
@@ -100,10 +116,9 @@ object GitHubApi {
      * GitHub.
      *
      * The code travelled in a URL and is worth nothing on its own — the server
-     * has only the SHA-256 of the verifier until this call, and spends the code
-     * whether or not the verifier matches.
+     * holds only the SHA-256 of the verifier until this call.
      */
-    fun redeemHandoff(serverUrl: String, code: String, verifier: String): Handoff? {
+    fun redeemHandoff(serverUrl: String, code: String, verifier: String): HandoffResult {
         val body = JSONObject().put("code", code).put("verifier", verifier).toString()
         val connection =
             URL("$serverUrl/api/auth/android/exchange").openConnection() as HttpURLConnection
@@ -113,12 +128,16 @@ object GitHubApi {
             connection.setRequestProperty("User-Agent", "IdeaBRD-Android")
             connection.doOutput = true
             connection.outputStream.use { it.write(body.toByteArray()) }
-            if (connection.responseCode !in 200..299) return null
+            val status = connection.responseCode
+            if (status !in 200..299) return HandoffResult.Refused(status)
             val json = JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
-            val token = json.optString("token").takeIf { it.isNotEmpty() } ?: return null
-            Handoff(token, json.optString("login").takeIf { it.isNotEmpty() })
+            val token = json.optString("token").takeIf { it.isNotEmpty() }
+                ?: return HandoffResult.Refused(status)
+            HandoffResult.Ok(token, json.optString("login").takeIf { it.isNotEmpty() })
+        } catch (_: IOException) {
+            HandoffResult.Unreachable
         } catch (_: Exception) {
-            null
+            HandoffResult.Refused(0)
         } finally {
             connection.disconnect()
         }
