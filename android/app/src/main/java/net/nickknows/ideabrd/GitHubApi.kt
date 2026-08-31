@@ -143,6 +143,30 @@ object GitHubApi {
         }
     }
 
+    /**
+     * The IDEA.md at the root of a repository, or null if it hasn't got one.
+     *
+     * A whole clone to read one file is the wrong shape for filling in a board
+     * — this is a few kilobytes over one request, where a clone is megabytes
+     * and a decision the person should get to make.
+     */
+    fun readIdeaFile(repo: String, token: String): String? {
+        val connection = URL("$API/repos/$repo/contents/IDEA.md")
+            .openConnection() as HttpURLConnection
+        return try {
+            connection.setRequestProperty("Authorization", "Bearer $token")
+            // Ask for the file itself rather than JSON wrapping base64 of it.
+            connection.setRequestProperty("Accept", "application/vnd.github.raw")
+            connection.setRequestProperty("User-Agent", "IdeaBRD-Android")
+            if (connection.responseCode != 200) return null
+            connection.inputStream.bufferedReader().use { it.readText() }
+        } catch (_: Exception) {
+            null
+        } finally {
+            connection.disconnect()
+        }
+    }
+
     /** Check a token and find out whose it is. Null if GitHub rejected it. */
     fun identify(token: String): Identity? {
         val connection = URL(USER_URL).openConnection() as HttpURLConnection

@@ -212,7 +212,14 @@ recorded there as a **reference** — rank, colour and a link, nothing else —
 because its notes and to-dos are tracked in that repository under its own
 history, and a second copy could only ever drift from it.
 
-So the app reads that repository too. Opening such a tile offers *Fetch this
+So the tile is filled in from that repository, not from the board. The board
+opens by reading each linked repo's IDEA.md over one small request apiece,
+cached on disk — kilobytes, not a clone — because a grid of tiles with no
+status and no progress is not a board, and cloning sixteen repositories to
+find out is not a thing to do to somebody on mobile data.
+
+Cloning stays deliberate, for when you open an idea to work on it. Opening
+such a tile offers *Fetch this
 idea*, which clones it once; after that it reads and writes that repo's own
 `IDEA.md` and works offline like everything else. Fetching is always something
 the person asks for, never a side effect of opening a tile — an idea repo can be

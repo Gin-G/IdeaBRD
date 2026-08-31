@@ -12,6 +12,7 @@ import net.nickknows.ideabrd.core.BoardStore
 import net.nickknows.ideabrd.core.InvalidRepoRef
 import net.nickknows.ideabrd.core.IssueInfo
 import net.nickknows.ideabrd.core.LinkedRepoStore
+import net.nickknows.ideabrd.core.parseIdeaFile
 import net.nickknows.ideabrd.core.ParsedIdeaFile
 import net.nickknows.ideabrd.core.ParsedTodo
 import net.nickknows.ideabrd.core.applyIssues
@@ -55,6 +56,7 @@ class BoardPlugin : Plugin() {
     private val linkedDir: File get() = File(context.filesDir, "linked")
     private val store: BoardStore get() = BoardStore(boardDir)
     private val issues: IssueCache get() = IssueCache(File(context.filesDir, "issues"))
+    private val linkedIdeas: IdeaCache get() = IdeaCache(File(context.filesDir, "linked-ideas"))
 
     private fun settings() = context.getSharedPreferences("ideabrd-board", 0)
 
@@ -117,6 +119,10 @@ class BoardPlugin : Plugin() {
             settings().edit().putString("repo", repo).putString("branch", branch).apply()
             val git = GitRepo(boardDir, repo, branch)
             if (!git.cloned) git.clone(credentials())
+            // Connecting a board and being shown a grid of blank tiles is not
+            // a working board; the ideas are in their own repositories and
+            // this is where they get read.
+            refreshLinkedIdeas()
             status()
         }
     }
@@ -157,6 +163,11 @@ class BoardPlugin : Plugin() {
     @PluginMethod
     fun listIdeas(call: PluginCall) {
         background(call) {
+            // Anything never read gets read now. After the first open this
+            // costs nothing, and it means a board connected before there was
+            // a cache — or an idea linked since — fills itself in rather than
+            // waiting for someone to think of syncing.
+            refreshLinkedIdeas(onlyMissing = true)
             val ideas = JSArray()
             store.read().forEach { ideas.put(tileJson(it, withTodos = false)) }
             JSObject().put("ideas", ideas)
@@ -183,7 +194,16 @@ class BoardPlugin : Plugin() {
     private fun tileJson(tile: BoardStore.Tile, withTodos: Boolean): JSObject {
         val repo = tile.file.repo
         val linked = repo?.let { linkedRepo(it) }
-        val content = if (linked?.cloned == true) LinkedRepoStore(linked.dir).read() else null
+        // Where the idea actually is, best copy first: a checkout if this one
+        // has been fetched to work on, otherwise the last IDEA.md read from
+        // the repo, otherwise the board's reference — which carries the colour
+        // and the link and nothing anyone wants to read.
+        val content =
+            if (linked?.cloned == true) {
+                LinkedRepoStore(linked.dir).read()
+            } else {
+                repo?.let { linkedIdeas.load(it) }?.let { parseIdeaFile(it) }
+            }
         val idea = content ?: tile.file
         val known = repo?.let { issues.load(it) } ?: emptyMap()
 
@@ -369,6 +389,7 @@ class BoardPlugin : Plugin() {
                 merged += linked.sync(credentials, author()).merged
                 refreshIssues(linked.repo)
             }
+            refreshLinkedIdeas()
             JSObject()
                 .put("merged", JSArray(merged.toTypedArray()))
                 .put("unsynced", board.unpushed() + linkedClones().sumOf { it.unpushed() })
@@ -602,6 +623,24 @@ class BoardPlugin : Plugin() {
     }
 
     /** Update the cached issues for a repo. Silent on failure — it is a cache. */
+    /**
+     * Read the IDEA.md of every idea that lives in its own repository.
+     *
+     * One small request each, and failures are silent on purpose: a board that
+     * shows what it last knew beats a board that refuses to open because one
+     * repository was renamed or the train went into a tunnel.
+     */
+    private fun refreshLinkedIdeas(onlyMissing: Boolean = false) {
+        val token = token() ?: return
+        store.read()
+            .mapNotNull { it.file.repo }
+            .distinct()
+            .filter { !onlyMissing || linkedIdeas.load(it) == null }
+            .forEach { repo ->
+                GitHubApi.readIdeaFile(repo, token)?.let { linkedIdeas.save(repo, it) }
+            }
+    }
+
     private fun refreshIssues(repo: String) {
         val token = token() ?: return
         val found: Map<Int, IssueInfo> =
