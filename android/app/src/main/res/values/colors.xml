@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ideabrd_background">#0f172a</color>
+    <!-- The board's own top edge (slate-950). This shows through behind the
+         status bar once the content is inset, so it has to be the colour the
+         page starts with or there is a visible seam under the clock. -->
+    <color name="ideabrd_background">#020617</color>
     <color name="ideabrd_accent">#6366f1</color>
     <color name="ic_launcher_background">#0f172a</color>
 </resources>

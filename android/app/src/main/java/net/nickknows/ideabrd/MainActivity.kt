@@ -1,6 +1,10 @@
 package net.nickknows.ideabrd
 
 import android.os.Bundle
+import android.view.View
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import com.getcapacitor.BridgeActivity
 
 /**
@@ -23,5 +27,34 @@ class MainActivity : BridgeActivity() {
         registerPlugin(BoardPlugin::class.java)
         registerPlugin(AuthPlugin::class.java)
         super.onCreate(savedInstanceState)
+        keepContentOutFromUnderTheSystemBars()
+    }
+
+    /**
+     * Pad the web layer in by whatever the status and navigation bars cover.
+     *
+     * From Android 15, an app targeting SDK 35 gets the whole screen whether it
+     * asked for it or not: the system stops insetting the window and draws its
+     * bars on top. For a page that puts controls in a header, that means the
+     * clock and the battery sitting on the buttons.
+     *
+     * The board is not a photo viewer and gains nothing from drawing under
+     * them, so the insets are simply turned into padding on the content view.
+     * The window background shows through behind the bars, which is the same
+     * dark the header already is. Reported rather than consumed, so anything
+     * else that wants to know — the keyboard, in particular — still hears.
+     */
+    private fun keepContentOutFromUnderTheSystemBars() {
+        val content = findViewById<View>(android.R.id.content)
+        ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
+            val bars = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout(),
+            )
+            view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            insets
+        }
+        // Dark bars behind light content: tell the system to draw its icons
+        // light, or the clock is near-black on near-black.
+        WindowCompat.getInsetsController(window, content).isAppearanceLightStatusBars = false
     }
 }
