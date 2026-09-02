@@ -1,6 +1,6 @@
 ---
 status: active
-progress: 96
+progress: 93
 ---
 
 # IdeaBRD
@@ -50,7 +50,9 @@ A personal idea board: each idea is a tile with notes, a to-do list that can be
 backed by GitHub issues, progress tracking and live GitHub data for repo-linked
 projects. FastAPI + async SQLAlchemy on Postgres (CNPG), SvelteKit + Tailwind
 front end, deployed to Kubernetes by Argo CD with secrets from OpenBao, plus an
-Android app that reads the board straight from git. Backend lives in
+Android app that reads the board straight from git. The database is on its way
+out: the repo is the board, and the server is becoming a git client that holds
+the GitHub client secret neither a phone nor a browser can. Backend lives in
 `backend/app`, the UI in `frontend/src`, the chart in `chart/`, the app in
 `android/`; `docker-compose.yml` runs the stack locally and `backend/tests`
 holds the pytest suite. Every board change is now dual-written to a git repo,
@@ -91,10 +93,14 @@ authoritative until reconciliation says the git copy has earned the swap.
 - [x] Authenticate on device with the GitHub device flow, since an app distributed to users can't ship a client secret
 - [x] Release the Android app from a GitHub Actions workflow on a version tag, signed and attached to a release
 - [x] Hold both IDEA.md renderers to the same golden files, so the Kotlin port and the Python one can't drift into writing different bytes for the same idea
-- [ ] Cut over to git as the only store and retire the database, chart and cluster once the board repo has proven itself
+- [x] Decide what the cutover actually is — the server stays, the database goes. Reconciliation found the repos ahead of the database on six ideas of sixteen, so git is already the truer copy; but the server now holds the GitHub client secret that gives the phone one-tap sign-in, and receives the webhooks, so retiring it would cost more than it saved
+- [x] Read the board from git on the server — `app/store.py`, the server's half of what the phone already does, over the API rather than a checkout so there is no clone to lose. Ids are hashed from slugs by the same arithmetic the browser and the phone use, checked against it, so all three agree what `/api/ideas/759392415` means
+- [ ] Sessions without a database — identity and the per-user GitHub token have to outlive a request without a users table, which means an encrypted cookie rather than a signed one, since Starlette's sessions are readable by whoever holds them
+- [ ] Move the API onto the store — ideas, todos, board and repos routers read and write the repo instead of Postgres, and `dualwrite` retires with the second copy it existed to keep in step
 - [x] Name a shared idea on a collaborator's board — slugs are unique per owner, so an idea shared onto a board that already has that directory has nowhere to go
 - [x] Refuse to publish over a board repo that moved since last time — `board_commit_sha` is recorded on every publish and read by nothing, so a direct edit to the repo is silently overwritten
-- [ ] Let collaboration be git's: two people who both link an idea's repo collaborate there by branch and PR, so IdeaCollaborator, IdeaInvitation and roles retire at cutover in favour of repo permissions
+- [ ] Let collaboration be git's: two people who both link an idea's repo collaborate there by branch and PR, so IdeaCollaborator, IdeaInvitation and roles retire in favour of repo permissions
+- [ ] Take Postgres out — the models, the migrations, the CNPG cluster, the nightly backup and the volume it writes to, once nothing reads them
 - [x] Promote a note-only idea to its own repo — an idea kept inside a board repo has nowhere for anyone else to link, so giving it a repo is what sharing now means
 - [x] Stop the board repo copying a linked idea at all — it records a reference and the board keys, so there is no second copy of the notes, to-dos or logo to explain, and none that can drift
 - [x] Show open pull requests on a repo-linked tile, now that a PR is where an idea's collaboration actually happens
