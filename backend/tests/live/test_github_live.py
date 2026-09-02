@@ -21,6 +21,7 @@ organisation you don't mind having a repo appear in for thirty seconds.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 
@@ -49,6 +50,24 @@ pytestmark = [
 ]
 
 
+async def _eventually(call, *, until, what, attempts=10, delay=1.0):
+    """Retry until GitHub agrees with itself.
+
+    Creating an issue and listing issues are not read-your-writes consistent:
+    the create returns #1 and the list is still empty a moment later. That is
+    GitHub's behaviour, not a bug in the client — the same call a few seconds
+    on returns it — so the suite waits rather than reporting a failure that
+    says nothing about this code.
+    """
+    last = None
+    for _ in range(attempts):
+        last = await call()
+        if until(last):
+            return last
+        await asyncio.sleep(delay)
+    raise AssertionError(f"Gave up waiting for {what}; last saw {last!r}")
+
+
 @pytest.fixture
 async def throwaway_repo():
     """A real repository, created for one test and deleted afterwards."""
@@ -65,7 +84,16 @@ async def throwaway_repo():
     try:
         yield full_name, branch
     finally:
-        await delete_repo(full_name, token=TOKEN)
+        # Deleting needs `delete_repo`, which a token with plain `repo` does
+        # not have. That is a reason to leave a repository behind and say so,
+        # not a reason to fail a suite that has already done its job.
+        try:
+            await delete_repo(full_name, token=TOKEN)
+        except Exception as exc:  # noqa: BLE001 - reported, not handled
+            print(
+                f"\nCould not delete {full_name}: {exc}\n"
+                f"Delete it by hand, or give the token the `delete_repo` scope.",
+            )
 
 
 @pytest.mark.asyncio
@@ -123,7 +151,11 @@ async def test_contents_and_issues_round_trip(throwaway_repo):
 
     issue = await create_issue(full_name, "Live issue", "body", token=TOKEN)
     assert issue.number > 0
-    listed = await list_issues(full_name, token=TOKEN)
+    listed = await _eventually(
+        lambda: list_issues(full_name, token=TOKEN),
+        until=lambda found: issue.number in found,
+        what=f"issue #{issue.number} to appear in the list",
+    )
     assert listed[issue.number].title == "Live issue"
 
     closed = await update_issue(full_name, issue.number, state="closed", token=TOKEN)

@@ -1,6 +1,6 @@
 ---
 status: active
-progress: 90
+progress: 96
 ---
 
 # IdeaBRD
@@ -99,12 +99,18 @@ authoritative until reconciliation says the git copy has earned the swap.
 - [x] Stop the board repo copying a linked idea at all — it records a reference and the board keys, so there is no second copy of the notes, to-dos or logo to explain, and none that can drift
 - [x] Show open pull requests on a repo-linked tile, now that a PR is where an idea's collaboration actually happens
 - [x] Create a board repo from the app on first run — pick the account or org, get an empty repo, and publish the existing board into it as that repo's first commit
-- [ ] Run the live GitHub suite against a real repo — `backend/tests/live` and a weekly workflow now exist, but nothing has actually run them until `IDEABRD_GITHUB_TOKEN` is set on the repository
-- [ ] Try the Android app on real hardware — it now runs on an emulator (see `android/README.md`), but JGit against a real repo on a real phone (clone size, storage, background time limits) has never been exercised
+- [x] Run the live GitHub suite against a real repo — it has now run, and earned itself immediately: creating an issue and listing issues are not read-your-writes consistent at GitHub, so the suite waits for the list to catch up rather than reporting a client bug that isn't one
+- [x] Try the Android app on real hardware — done, and it found four things an emulator never would: a sign-in dropped by one failed request, a sign-in lost when Android reclaimed the app mid-flow, tiles with no status because the linked repos were never read, and the whole page drawn under the status bar on Android 15
 - [x] Give the Android release a stable signing key, and make the launcher icon the board's own logo rather than a lightbulb drawn by hand — the four secrets are set, so releases from v0.2.0 on share one identity and upgrade in place
 - [x] Decide how the app signs in — three ways, best first: one tap brokered by the server over an Android App Link, since it holds the client secret the app never can; a token you make yourself, needing nothing registered; and the device flow, which works but means typing eight characters into a page that refuses a paste
-- [ ] Point a GitHub webhook at the deployment and put `webhook_secret` in OpenBao — the receiver refuses every request until the secret exists, so it is code that isn't running yet
+- [x] Point a GitHub webhook at the deployment and put `webhook_secret` in OpenBao — the secret is in place, every idea repo has a webhook, and all sixteen deliver 200. Setting `webhooks: true` without the secret had also been failing the whole ExternalSecret for eight days, so nothing else in that secret could have been changed either
 - [x] Read a repo-linked idea on the phone — the board repo records only where such an idea lives, so a linked tile was a link and an empty page; the app now clones that repository on request and reads and writes its own IDEA.md
 - [x] Show issue-backed to-dos properly on the phone — issues are fetched and cached for offline, the item they back takes its title and state from them, and ticking a box closes the issue
 - [x] Do the GitHub-side actions from the phone — promoting a to-do to an issue, importing a repo's open issues, and giving a held idea a repository of its own, which is created, pushed to, and left as a reference on the board
 - [x] Link an idea to an existing repo from the phone, with the same opt-in the server asks for — a repo that already has an IDEA.md is adopted, and one that hasn't is left untouched until a second, explicit yes
+- [x] Ship the web app inside the APK — AGP's asset ignore pattern drops directories whose names start with an underscore, SvelteKit calls its build output `_app`, and two signed releases went out containing index.html and none of the JavaScript it asks for. A build-time check now compares what `cap copy` wrote against what the APK holds
+- [x] Let the phone sign in with one tap — the server holds the client secret the app never can, so it runs the redirect flow and hands the result back over an Android App Link, carrying a one-time code rather than the token and redeemed with a secret the app never sent
+- [x] Survive Android reclaiming the app in the middle of a sign-in — finishing means leaving for the browser, which is exactly when a small app gets killed, and the code in flight now outlives the process rather than stranding an authorisation nobody will collect
+- [x] Stop a dropped connection ending a sign-in — one failed poll was rejecting the whole attempt and putting a resolver error on screen, where the code is good until it expires and GitHub is still holding it
+- [x] Fill tiles from the repositories their ideas live in — a linked idea is a reference on the board, so a freshly connected board was a grid of tiles reading "idea, 0%". One small request per repo fills them in; cloning stays deliberate
+- [x] Keep the board out from under the system bars — from Android 15 an app targeting SDK 35 gets the whole screen whether it asked or not, which put the clock and the battery on top of the header
