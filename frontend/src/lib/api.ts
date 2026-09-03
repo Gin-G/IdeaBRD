@@ -22,6 +22,41 @@ import { nativeApi } from './native/api';
 // Same-origin in production (nginx proxies /api). Override with VITE_API_BASE if needed.
 const BASE = import.meta.env.VITE_API_BASE ?? '';
 
+/**
+ * Whether this tab has already been sent to sign in and come back.
+ *
+ * Kept in sessionStorage rather than memory: the redirect reloads the page, so
+ * anything in memory is gone by the time the answer is needed. Cleared once a
+ * request succeeds, so the next expiry redirects again.
+ */
+const SIGN_IN_TRIED = 'ideabrd.signInTried';
+
+function signInAlreadyTried(): boolean {
+	try {
+		return sessionStorage.getItem(SIGN_IN_TRIED) === '1';
+	} catch {
+		// Storage disabled: better to redirect once too often than to refuse
+		// to sign somebody in at all.
+		return false;
+	}
+}
+
+function markSignInTried() {
+	try {
+		sessionStorage.setItem(SIGN_IN_TRIED, '1');
+	} catch {
+		/* see above */
+	}
+}
+
+function clearSignInTried() {
+	try {
+		sessionStorage.removeItem(SIGN_IN_TRIED);
+	} catch {
+		/* see above */
+	}
+}
+
 export class ApiError extends Error {
 	status: number;
 	constructor(status: number, message: string) {
@@ -43,8 +78,16 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 	});
 
 	if (res.status === 401) {
-		// Not logged in: bounce the browser to the backend login flow.
-		redirectToLogin();
+		// Sessions live in the server's memory, so a restart signs everyone
+		// out. Bouncing through GitHub costs a redirect and no interaction —
+		// the app is already authorised — which is what makes that acceptable.
+		// Once, though: if the round trip comes back still unauthenticated the
+		// problem is the sign-in itself, and a page that redirects for ever
+		// tells nobody anything.
+		if (!signInAlreadyTried()) {
+			markSignInTried();
+			redirectToLogin();
+		}
 		throw new ApiError(401, 'Not authenticated');
 	}
 	if (!res.ok) {
@@ -56,6 +99,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 		}
 		throw new ApiError(res.status, detail);
 	}
+	clearSignInTried();
 	if (res.status === 204) return undefined as T;
 	return res.json() as Promise<T>;
 }

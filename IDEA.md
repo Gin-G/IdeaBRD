@@ -1,6 +1,6 @@
 ---
 status: active
-progress: 93
+progress: 95
 ---
 
 # IdeaBRD
@@ -95,7 +95,7 @@ authoritative until reconciliation says the git copy has earned the swap.
 - [x] Hold both IDEA.md renderers to the same golden files, so the Kotlin port and the Python one can't drift into writing different bytes for the same idea
 - [x] Decide what the cutover actually is — the server stays, the database goes. Reconciliation found the repos ahead of the database on six ideas of sixteen, so git is already the truer copy; but the server now holds the GitHub client secret that gives the phone one-tap sign-in, and receives the webhooks, so retiring it would cost more than it saved
 - [x] Read the board from git on the server — `app/store.py`, the server's half of what the phone already does, over the API rather than a checkout so there is no clone to lose. Ids are hashed from slugs by the same arithmetic the browser and the phone use, checked against it, so all three agree what `/api/ideas/759392415` means
-- [ ] Sessions without a database — identity and the per-user GitHub token have to outlive a request without a users table, which means an encrypted cookie rather than a signed one, since Starlette's sessions are readable by whoever holds them
+- [x] Sessions without a database — held in the server's memory, not in the cookie. An encrypted cookie would survive restarts, but it parks a working GitHub token on the client where a browser profile or a logged proxy header becomes one; this way the cookie carries an opaque id, the token never leaves the server, and signing someone out is a delete rather than a denylist that puts the state back. A restart signs everyone out, which costs a redirect GitHub answers without asking, and the page takes it once — a page that redirects on every 401 spins for ever when the sign-in is what's broken
 - [ ] Move the API onto the store — ideas, todos, board and repos routers read and write the repo instead of Postgres, and `dualwrite` retires with the second copy it existed to keep in step
 - [x] Name a shared idea on a collaborator's board — slugs are unique per owner, so an idea shared onto a board that already has that directory has nowhere to go
 - [x] Refuse to publish over a board repo that moved since last time — `board_commit_sha` is recorded on every publish and read by nothing, so a direct edit to the repo is silently overwritten
