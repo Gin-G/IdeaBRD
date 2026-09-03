@@ -216,7 +216,14 @@ So the tile is filled in from that repository, not from the board. The board
 opens by reading each linked repo's IDEA.md over one small request apiece,
 cached on disk — kilobytes, not a clone — because a grid of tiles with no
 status and no progress is not a board, and cloning sixteen repositories to
-find out is not a thing to do to somebody on mobile data.
+find out is not a thing to do to somebody on mobile data. The tile's artwork
+comes across the same way: `idea_logo.<ext>` lives with the idea, in its own
+repository, not on the board.
+
+A logo is handed to the page as an absolute path and turned into a URL with
+`Capacitor.convertFileSrc`. The board file records a repo-relative path, which
+a WebView resolves against `https://localhost` and fails to find — which is why
+no logo appeared on the phone until v0.4.4, for any idea at all.
 
 Cloning stays deliberate, for when you open an idea to work on it. Opening
 such a tile offers *Fetch this

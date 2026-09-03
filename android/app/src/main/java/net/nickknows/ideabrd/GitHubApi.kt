@@ -167,6 +167,39 @@ object GitHubApi {
         }
     }
 
+    /**
+     * The `idea_logo.<ext>` at the root of a repository, if it has one.
+     *
+     * The tile's artwork is part of the idea and lives with it, so a board
+     * showing linked ideas has to fetch it the same way it fetches their
+     * IDEA.md. Two requests — one to learn the extension, one for the bytes.
+     */
+    fun readIdeaLogo(repo: String, token: String): Pair<String, ByteArray>? {
+        val listing = get("$API/repos/$repo/contents", token) ?: return null
+        val name = try {
+            val array = JSONArray(listing)
+            (0 until array.length())
+                .map { array.getJSONObject(it).optString("name") }
+                .firstOrNull { it.startsWith("idea_logo.") }
+        } catch (_: Exception) {
+            null
+        } ?: return null
+
+        val connection = URL("$API/repos/$repo/contents/$name")
+            .openConnection() as HttpURLConnection
+        return try {
+            connection.setRequestProperty("Authorization", "Bearer $token")
+            connection.setRequestProperty("Accept", "application/vnd.github.raw")
+            connection.setRequestProperty("User-Agent", "IdeaBRD-Android")
+            if (connection.responseCode != 200) return null
+            name to connection.inputStream.readBytes()
+        } catch (_: Exception) {
+            null
+        } finally {
+            connection.disconnect()
+        }
+    }
+
     /** Check a token and find out whose it is. Null if GitHub rejected it. */
     fun identify(token: String): Identity? {
         val connection = URL(USER_URL).openConnection() as HttpURLConnection

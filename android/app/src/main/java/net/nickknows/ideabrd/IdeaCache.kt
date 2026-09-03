@@ -35,7 +35,22 @@ class IdeaCache(private val root: File) {
         fileFor(repo).writeText(content)
     }
 
+    /** The logo last seen for this repo, or null if it has none. */
+    fun logo(repo: String): File? =
+        root.listFiles()
+            ?.firstOrNull { it.isFile && it.name.startsWith(repo.replace("/", "__") + ".logo.") }
+
+    fun saveLogo(repo: String, filename: String, bytes: ByteArray) {
+        root.mkdirs()
+        // One logo per repo: an idea that changed its artwork's extension must
+        // not leave the old one behind to be found first.
+        logo(repo)?.delete()
+        val ext = filename.substringAfterLast('.', "png")
+        File(root, repo.replace("/", "__") + ".logo." + ext).writeBytes(bytes)
+    }
+
     fun clear(repo: String) {
         fileFor(repo).delete()
+        logo(repo)?.delete()
     }
 }

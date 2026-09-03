@@ -11,6 +11,7 @@ import type {
 	Todo,
 	User
 } from '$lib/types';
+import { Capacitor } from '@capacitor/core';
 import { Auth, Board as BoardPlugin, type NativeTile } from './plugins';
 
 /**
@@ -104,6 +105,17 @@ function toTodos(tile: NativeTile): Todo[] {
 	});
 }
 
+/**
+ * A tile's artwork, as something the WebView can actually load.
+ *
+ * The plugin hands back an absolute path on the device. Capacitor serves those
+ * through its own local origin; used raw, the browser would resolve
+ * `/data/user/0/.../idea_logo.png` against https://localhost and 404.
+ */
+function logoUrl(path: string | null | undefined): string | null {
+	return path ? Capacitor.convertFileSrc(path) : null;
+}
+
 function toSummary(tile: NativeTile): IdeaSummary {
 	return {
 		id: remember(tile.slug),
@@ -111,7 +123,7 @@ function toSummary(tile: NativeTile): IdeaSummary {
 		status: (tile.status as Status) ?? 'idea',
 		progress: tile.progress,
 		color: tile.color,
-		logo_url: tile.logo,
+		logo_url: logoUrl(tile.logo),
 		github_repo: tile.repo,
 		position: 0,
 		role: 'owner',

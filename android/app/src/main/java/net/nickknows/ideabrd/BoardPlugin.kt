@@ -85,6 +85,28 @@ class BoardPlugin : Plugin() {
     }
 
     /** Where a linked idea's repository is checked out. One directory per repo. */
+    /**
+     * An absolute path to the tile's artwork, or null.
+     *
+     * The board file records a repo-relative path, which is meaningless to a
+     * WebView — an <img src="ideas/x/idea_logo.png"> resolves against
+     * https://localhost and 404s, which is why no logo has ever appeared on
+     * the phone. The page turns this into a URL with Capacitor.convertFileSrc.
+     *
+     * Same order as the idea's own content: the checkout if there is one, then
+     * what was last fetched, then the board's own copy for an idea that has no
+     * repository of its own.
+     */
+    private fun logoFor(tile: BoardStore.Tile, linked: GitRepo?, repo: String?): String? {
+        if (linked?.cloned == true) {
+            linked.dir.listFiles()
+                ?.firstOrNull { it.isFile && it.name.startsWith("idea_logo.") }
+                ?.let { return it.absolutePath }
+        }
+        repo?.let { linkedIdeas.logo(it) }?.let { return it.absolutePath }
+        return tile.logo?.let { File(boardDir, it).takeIf(File::isFile)?.absolutePath }
+    }
+
     private fun linkedRepo(repo: String) =
         GitRepo(File(linkedDir, repo.replace("/", "__")), repo)
 
@@ -216,7 +238,7 @@ class BoardPlugin : Plugin() {
         json.put("color", tile.file.color ?: BoardStore.DEFAULT_COLOR)
         json.put("rank", tile.file.rank)
         json.put("repo", repo)
-        json.put("logo", tile.logo)
+        json.put("logo", logoFor(tile, linked, repo))
         json.put("notes", idea.notes)
         json.put("linked", repo != null)
         json.put("linkedCloned", linked?.cloned == true)
@@ -638,6 +660,11 @@ class BoardPlugin : Plugin() {
             .filter { !onlyMissing || linkedIdeas.load(it) == null }
             .forEach { repo ->
                 GitHubApi.readIdeaFile(repo, token)?.let { linkedIdeas.save(repo, it) }
+                if (linkedIdeas.logo(repo) == null) {
+                    GitHubApi.readIdeaLogo(repo, token)?.let { (name, bytes) ->
+                        linkedIdeas.saveLogo(repo, name, bytes)
+                    }
+                }
             }
     }
 
