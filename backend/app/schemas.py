@@ -4,6 +4,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.ideafile import normalize_site
 from app.repo_ref import InvalidRepoRef, normalize_repo
 
 
@@ -15,6 +16,20 @@ def _normalized_repo(value: str | None) -> str | None:
         return normalize_repo(value)
     except InvalidRepoRef as exc:
         raise ValueError(str(exc)) from exc
+
+
+def _normalized_site(value: str | None) -> str | None:
+    """Store a site as a full https URL; blank clears it, junk is refused.
+
+    The file parser drops a bad site silently, because a hand-edited file
+    shouldn't fail as a whole. Someone typing into the form should be told.
+    """
+    if value is None or not value.strip():
+        return None
+    site = normalize_site(value)
+    if site is None:
+        raise ValueError("Site must be a web address, like example.com or https://example.com/app")
+    return site
 
 
 class UserOut(BaseModel):
@@ -73,10 +88,14 @@ class IdeaBase(BaseModel):
     status: str = "idea"
     progress: int = Field(default=0, ge=0, le=100)
     color: str = "#6366f1"
+    public: bool = False
+    site: str | None = None
+    site_public: bool = False
     logo_url: str | None = None
     github_repo: str | None = None
 
     _normalize_github_repo = field_validator("github_repo")(_normalized_repo)
+    _normalize_site = field_validator("site")(_normalized_site)
 
 
 class IdeaCreate(IdeaBase):
@@ -89,11 +108,15 @@ class IdeaUpdate(BaseModel):
     status: str | None = None
     progress: int | None = Field(default=None, ge=0, le=100)
     color: str | None = None
+    public: bool | None = None
+    site: str | None = None
+    site_public: bool | None = None
     logo_url: str | None = None
     github_repo: str | None = None
     position: int | None = None
 
     _normalize_github_repo = field_validator("github_repo")(_normalized_repo)
+    _normalize_site = field_validator("site")(_normalized_site)
 
 
 class OwnerInfo(BaseModel):
@@ -131,6 +154,7 @@ class IdeaSummary(BaseModel):
     status: str
     progress: int
     color: str
+    public: bool = False
     logo_url: str | None = None
     github_repo: str | None = None
     position: int

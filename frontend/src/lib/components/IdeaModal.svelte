@@ -29,6 +29,11 @@
 	let title = $state(init?.title ?? '');
 	let status = $state<Status>(init?.status ?? 'idea');
 	let color = $state(init?.color ?? PALETTE[0]);
+	let isPublic = $state(init?.public ?? false);
+	let site = $state(init?.site ?? '');
+	let sitePublic = $state(init?.site_public ?? false);
+	// Public is a choice about the owner's own board, so only the owner sees it.
+	const canPublish = !init || init.role === 'owner';
 	let logo = $state(init?.logo_url ?? '');
 	let repo = $state(init?.github_repo ?? '');
 	let saving = $state(false);
@@ -88,6 +93,9 @@
 			title: title.trim(),
 			status,
 			color,
+			...(canPublish ? { public: isPublic } : {}),
+			site: site.trim() || null,
+			site_public: !!site.trim() && sitePublic,
 			logo_url: logo.trim() || null,
 			github_repo: repo.trim() || null
 		});
@@ -138,6 +146,33 @@
 					</div>
 				</div>
 			</div>
+
+			<div>
+				<label class="mb-1 block text-xs font-medium text-slate-400" for="site"
+					>Site (where it runs, if anywhere)</label
+				>
+				<input id="site" class="input" bind:value={site} placeholder="myapp.example.com" />
+				{#if site.trim()}
+					<label class="mt-2 flex cursor-pointer items-center gap-2 text-xs text-slate-300">
+						<input type="checkbox" class="h-4 w-4 accent-indigo-500" bind:checked={sitePublic} />
+						Show this link on public pages
+						<span class="text-slate-500">(leave off for sites behind a login)</span>
+					</label>
+				{/if}
+			</div>
+
+			{#if canPublish}
+				<label class="flex cursor-pointer items-start gap-3 rounded-lg border border-white/10 p-3 hover:bg-white/5">
+					<input type="checkbox" class="mt-0.5 h-4 w-4 accent-indigo-500" bind:checked={isPublic} />
+					<span class="text-sm">
+						<span class="font-medium text-slate-200">Show on my public page</span>
+						<span class="mt-0.5 block text-xs text-slate-400">
+							Anyone can see the title, status, progress and the first paragraph of the
+							notes. The rest of the notes, to-do text and private repo names stay hidden.
+						</span>
+					</span>
+				</label>
+			{/if}
 
 			<div>
 				<label class="mb-1 block text-xs font-medium text-slate-400" for="logo"

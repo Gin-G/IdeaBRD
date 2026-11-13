@@ -195,6 +195,9 @@ fun mergeParsed(
         color = pick(base?.color, ours.color, theirs.color),
         rank = pick(base?.rank, ours.rank, theirs.rank),
         repo = pick(base?.repo, ours.repo, theirs.repo),
+        public = pick(base?.public, ours.public, theirs.public),
+        site = pick(base?.site, ours.site, theirs.site),
+        sitePublic = pick(base?.sitePublic, ours.sitePublic, theirs.sitePublic),
         todos = mergeTodos(base?.todos, ours.todos, theirs.todos),
     )
 
@@ -232,6 +235,9 @@ fun mergeIdeaFiles(
             color = parsed.color,
             rank = parsed.rank,
             repo = parsed.repo,
+            public = parsed.public,
+            site = parsed.site,
+            sitePublic = parsed.sitePublic,
         )
     return rendered to parsed.copy(title = title.ifEmpty { null })
 }

@@ -1,4 +1,5 @@
 import type {
+	PublicBoard,
 	Board,
 	BoardOwners,
 	Collaborator,
@@ -102,6 +103,20 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 	clearSignInTried();
 	if (res.status === 204) return undefined as T;
 	return res.json() as Promise<T>;
+}
+
+/**
+ * An owner's public page. Deliberately not `request`: it sends no cookie, and a
+ * visitor who isn't signed in must never be bounced to the login page.
+ */
+export async function fetchPublicBoard(login: string): Promise<PublicBoard> {
+	const res = await fetch(`${BASE}/api/public/${encodeURIComponent(login)}`);
+	if (!res.ok) throw new ApiError(res.status, res.statusText);
+	const board = (await res.json()) as PublicBoard;
+	for (const idea of board.ideas) {
+		if (idea.logo_url?.startsWith('/')) idea.logo_url = `${BASE}${idea.logo_url}`;
+	}
+	return board;
 }
 
 export function redirectToLogin() {

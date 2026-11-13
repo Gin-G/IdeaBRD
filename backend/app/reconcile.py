@@ -38,7 +38,7 @@ from app.publisher import (
 
 # Fields compared between the two copies of an idea, in the order a reader
 # would want them: what the idea says first, where the board puts it last.
-COMPARED = ("title", "notes", "status", "progress", "todos", "color", "rank", "repo")
+COMPARED = ("title", "notes", "status", "progress", "todos", "color", "rank", "repo", "public", "site", "site_public")
 
 SAME = "same"
 DIFFERS = "differs"

@@ -123,6 +123,7 @@ function toSummary(tile: NativeTile): IdeaSummary {
 		status: (tile.status as Status) ?? 'idea',
 		progress: tile.progress,
 		color: tile.color,
+		public: tile.public ?? false,
 		logo_url: logoUrl(tile.logo),
 		github_repo: tile.repo,
 		position: 0,
@@ -138,6 +139,8 @@ function toIdea(tile: NativeTile): Idea {
 	return {
 		...toSummary(tile),
 		notes: tile.notes,
+		site: tile.site ?? null,
+		site_public: tile.sitePublic ?? false,
 		created_at: now,
 		updated_at: now,
 		todos: toTodos(tile),
@@ -238,6 +241,10 @@ export const nativeApi = {
 				status: data.status,
 				progress: data.progress,
 				color: data.color,
+				public: data.public,
+				// '' clears the site on the device; undefined leaves it alone.
+				site: data.site === undefined ? undefined : (data.site ?? ''),
+				sitePublic: data.site_public,
 				repo: data.github_repo
 			})
 		);

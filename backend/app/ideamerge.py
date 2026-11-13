@@ -195,6 +195,9 @@ def merge_parsed(
         color=field("color"),
         rank=field("rank"),
         repo=field("repo"),
+        public=field("public"),
+        site=field("site"),
+        site_public=field("site_public"),
         todos=_merge_todos(base.todos if base else None, ours.todos, theirs.todos),
     )
 
@@ -226,5 +229,8 @@ def merge_idea_files(
         color=parsed.color,
         rank=parsed.rank,
         repo=parsed.repo,
+        public=parsed.public,
+        site=parsed.site,
+        site_public=parsed.site_public,
     )
     return rendered, replace(parsed, title=title or None)

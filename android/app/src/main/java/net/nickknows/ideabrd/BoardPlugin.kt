@@ -18,6 +18,7 @@ import net.nickknows.ideabrd.core.ParsedTodo
 import net.nickknows.ideabrd.core.applyIssues
 import net.nickknows.ideabrd.core.issueEdits
 import net.nickknows.ideabrd.core.mergeImportedIssues
+import net.nickknows.ideabrd.core.normalizeSite
 import net.nickknows.ideabrd.core.normalizeRepo
 import org.eclipse.jgit.lib.PersonIdent
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider
@@ -236,6 +237,9 @@ class BoardPlugin : Plugin() {
         json.put("progress", idea.progress ?: 0)
         // Colour and rank are the board's, never the idea's own repo's.
         json.put("color", tile.file.color ?: BoardStore.DEFAULT_COLOR)
+        json.put("public", tile.file.public)
+        json.put("site", idea.site)
+        json.put("sitePublic", idea.sitePublic)
         json.put("rank", tile.file.rank)
         json.put("repo", repo)
         json.put("logo", logoFor(tile, linked, repo))
@@ -319,17 +323,27 @@ class BoardPlugin : Plugin() {
                 color = call.getString("color") ?: tile.file.color,
                 rank = tile.file.rank,
                 repo = tile.file.repo,
+                // Board-level, so it comes from the board's file even for a
+                // linked idea; the linked repo's own IDEA.md never carries it.
+                public = call.getBoolean("public") ?: tile.file.public,
+                // Idea-level, so from the idea's own file. An empty string
+                // clears the site; an absent key leaves it alone.
+                site = if (call.data.has("site")) normalizeSite(call.getString("site")) else current.site,
+                sitePublic = call.getBoolean("sitePublic") ?: current.sitePublic,
                 todos = submitted ?: current.todos,
             )
 
             if (linked != null) {
                 linked.store.write(updated)
                 linked.git.commitAll("Update idea: ${updated.title}", author())
-                // The colour is the board's to keep, so a change to it still
-                // rewrites the board's own file.
-                if (updated.color != tile.file.color) {
-                    store.writeIdea(slug, tile.file.copy(color = updated.color))
-                    boardRepo()?.commitAll("Recolour tile: ${updated.title}", author())
+                // The colour and the public flag are the board's to keep, so a
+                // change to either still rewrites the board's own file.
+                if (updated.color != tile.file.color || updated.public != tile.file.public) {
+                    store.writeIdea(
+                        slug,
+                        tile.file.copy(color = updated.color, public = updated.public),
+                    )
+                    boardRepo()?.commitAll("Update tile: ${updated.title}", author())
                 }
                 mirrorIssues(linked.repo, current.todos, updated.todos)
             } else {

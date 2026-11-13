@@ -93,6 +93,11 @@
 						<div class="truncate text-xs text-slate-400">
 							{#if github}
 								@{github.github_login}{github.has_repo_token ? ' · repo access' : ''}
+								{#if github.github_login && github.has_repo_token}
+									· <a class="text-indigo-300 hover:underline" href="/p/{github.github_login}"
+										>public page</a
+									>
+								{/if}
 							{:else if auth.providers.github}
 								Not linked
 							{:else}

@@ -12,7 +12,9 @@ the shape below matters more than it looks. Anything the parser
 (backend/app/ideafile.py) can't read is dropped silently.
 
   frontmatter  status: one of idea, active, paused, done. progress: 0-100.
-               Any other key is ignored.
+               site: where it runs, if anywhere ("https://" is assumed).
+               site_public: true to show that link on a public page;
+               anything else keeps it private. Any other key is ignored.
   # heading    The idea title (first H1).
   prose        Everything outside the Todos section becomes the tile's
                notes, shown on the board — so keep it short. Documentation
@@ -27,6 +29,12 @@ the shape below matters more than it looks. Anything the parser
                in this repo. The issue wins: its title becomes the to-do's
                text and its open/closed state the checkbox, both here and on
                the board. Ticking the box in the app closes the issue.
+
+The board owner can list this idea on their public IdeaBRD page. Anyone can
+then read the title, status, progress, to-do counts and the FIRST PARAGRAPH of
+the notes, so make that paragraph the plain pitch: no hostnames, secret paths
+or internals. The site link appears only with "site_public: true". The rest of
+the notes and the to-do text are never shown there.
 
 Working in this repo? This file is the to-do list — use it rather than
 starting a parallel one. Tick items off as you finish them, add new ones as
@@ -121,3 +129,4 @@ authoritative until reconciliation says the git copy has earned the swap.
 - [x] Fill tiles from the repositories their ideas live in — a linked idea is a reference on the board, so a freshly connected board was a grid of tiles reading "idea, 0%". One small request per repo fills them in; cloning stays deliberate
 - [x] Keep the board out from under the system bars — from Android 15 an app targeting SDK 35 gets the whole screen whether it asked or not, which put the clock and the battery on top of the header
 - [x] Show the tile logos on the phone — an idea's artwork lives in its own repository as `idea_logo.<ext>`, so linked tiles had none to show; and the board file records a repo-relative path, which a WebView resolves against its own origin and never finds, so no logo had ever appeared for any idea
+- [x] Public page: per-idea public flag, site with site_public, read from the board repo via GitHub OAuth

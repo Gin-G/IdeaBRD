@@ -84,6 +84,9 @@ export interface NativeTile {
 	status: string;
 	progress: number;
 	color: string;
+	public: boolean;
+	site: string | null;
+	sitePublic: boolean;
 	rank: string | null;
 	repo: string | null;
 	logo: string | null;

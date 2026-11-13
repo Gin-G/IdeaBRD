@@ -8,7 +8,7 @@ from starlette.websockets import WebSocketDisconnect
 from app.auth import SESSION_USER_KEY
 from app.config import settings
 from app.realtime import manager
-from app.routers import auth, board, collaborators, ideas, repos, todos, webhooks
+from app.routers import auth, board, collaborators, ideas, public, repos, todos, webhooks
 
 app = FastAPI(title="IdeaBRD API", version="0.1.0")
 
@@ -36,6 +36,7 @@ app.include_router(repos.router)
 app.include_router(collaborators.router)
 app.include_router(board.router)
 app.include_router(webhooks.router)
+app.include_router(public.router)
 
 
 @app.get("/api/health", tags=["meta"])

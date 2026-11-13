@@ -14,7 +14,9 @@ the shape below matters more than it looks. Anything the parser
 (backend/app/ideafile.py) can't read is dropped silently.
 
   frontmatter  status: one of idea, active, paused, done. progress: 0-100.
-               Any other key is ignored.
+               site: where it runs, if anywhere ("https://" is assumed).
+               site_public: true to show that link on a public page;
+               anything else keeps it private. Any other key is ignored.
   # heading    The idea title (first H1).
   prose        Everything outside the Todos section becomes the tile's
                notes, shown on the board — so keep it short. Documentation
@@ -29,6 +31,12 @@ the shape below matters more than it looks. Anything the parser
                in this repo. The issue wins: its title becomes the to-do's
                text and its open/closed state the checkbox, both here and on
                the board. Ticking the box in the app closes the issue.
+
+The board owner can list this idea on their public IdeaBRD page. Anyone can
+then read the title, status, progress, to-do counts and the FIRST PARAGRAPH of
+the notes, so make that paragraph the plain pitch: no hostnames, secret paths
+or internals. The site link appears only with "site_public: true". The rest of
+the notes and the to-do text are never shown there.
 
 Working in this repo? This file is the to-do list — use it rather than
 starting a parallel one. Tick items off as you finish them, add new ones as

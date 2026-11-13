@@ -46,6 +46,25 @@ VALID_STATUSES = ("idea", "active", "paused", "done")
 # on several boards at different positions.
 _COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 
+# Where an idea runs. A bare host is accepted and given https://, because that
+# is how people write it ("hydrow.example.net"); anything that doesn't look like
+# a web address is dropped rather than published as a broken link.
+_SITE_RE = re.compile(
+    r"^https?://[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}(?::\d+)?(?:/\S*)?$", re.IGNORECASE
+)
+_SCHEME_RE = re.compile(r"^https?://", re.IGNORECASE)
+
+
+def normalize_site(raw: str | None) -> str | None:
+    """``hydrow.example.net`` -> ``https://hydrow.example.net``; junk -> None."""
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    if not _SCHEME_RE.match(raw):
+        raw = f"https://{raw}"
+    return raw if _SITE_RE.match(raw) else None
+
+
 _TODO_RE = re.compile(r"^\s*[-*]\s*\[( |x|X)\]\s*(.*\S)\s*$")
 _TODOS_HEADING_RE = re.compile(r"^##\s+to-?dos\s*$", re.IGNORECASE)
 # Trailing "(#12)" binds the item to a GitHub issue. Requiring a non-empty
@@ -67,7 +86,9 @@ the shape below matters more than it looks. Anything the parser
 (backend/app/ideafile.py) can't read is dropped silently.
 
   frontmatter  status: one of idea, active, paused, done. progress: 0-100.
-               Any other key is ignored.
+               site: where it runs, if anywhere ("https://" is assumed).
+               site_public: true to show that link on a public page;
+               anything else keeps it private. Any other key is ignored.
   # heading    The idea title (first H1).
   prose        Everything outside the Todos section becomes the tile's
                notes, shown on the board — so keep it short. Documentation
@@ -82,6 +103,12 @@ the shape below matters more than it looks. Anything the parser
                in this repo. The issue wins: its title becomes the to-do's
                text and its open/closed state the checkbox, both here and on
                the board. Ticking the box in the app closes the issue.
+
+The board owner can list this idea on their public IdeaBRD page. Anyone can
+then read the title, status, progress, to-do counts and the FIRST PARAGRAPH of
+the notes, so make that paragraph the plain pitch: no hostnames, secret paths
+or internals. The site link appears only with "site_public: true". The rest of
+the notes and the to-do text are never shown there.
 
 Working in this repo? This file is the to-do list — use it rather than
 starting a parallel one. Tick items off as you finish them, add new ones as
@@ -100,6 +127,11 @@ the item becomes an ordinary to-do again (the issue itself is left alone).
 
 HTML comments are stripped on read, so this block never reaches the board.
 -->"""
+
+
+def _is_yes(value: str | None) -> bool:
+    # Anything but an explicit yes is a no: a typo must never publish.
+    return (value or "").lower() in ("true", "yes")
 
 
 def _strip_comments(body: str) -> str:
@@ -135,11 +167,18 @@ class ParsedIdeaFile:
     notes: str = ""
     status: str | None = None
     progress: int | None = None
+    # Idea-level: travels with the idea, into a linked repo's own IDEA.md.
+    site: str | None = None
+    site_public: bool = False
     # Board-level keys; None when the file is a linked repo's own IDEA.md,
     # which carries the idea but not anyone's board position for it.
     color: str | None = None
     rank: str | None = None
     repo: str | None = None
+    # Shown on the owner's public page (see app.routers.public). Board-level
+    # like rank: it is the board owner's choice, so a linked repo's own IDEA.md
+    # never carries it.
+    public: bool = False
     # In file order.
     todos: list[ParsedTodo] = field(default_factory=list)
 
@@ -155,6 +194,9 @@ def render_idea_file(
     color: str | None = None,
     rank: str | None = None,
     repo: str | None = None,
+    public: bool = False,
+    site: str | None = None,
+    site_public: bool = False,
 ) -> str:
     """Render the idea as IDEA.md.
 
@@ -164,13 +206,21 @@ def render_idea_file(
 
     ``color``, ``rank`` and ``repo`` are omitted unless given, so the file the
     board repo writes can carry a tile's position while the same renderer keeps
-    writing linked repos exactly as it did before.
+    writing linked repos exactly as it did before. ``public`` is written only
+    when true, for the same reason: every file that was private before this key
+    existed renders byte-for-byte as it did.
     """
     lines = [
         "---",
         f"status: {status}",
         f"progress: {progress}",
     ]
+    if site:
+        lines.append(f"site: {site}")
+        # Only meaningful with a site, and only written when true, so a file
+        # without either renders exactly as it did before these keys existed.
+        if site_public:
+            lines.append("site_public: true")
     if color is not None:
         # Quoted because "#..." opens a comment in YAML, and a board file that
         # only our own lenient parser can read is a trap for anything else.
@@ -179,6 +229,8 @@ def render_idea_file(
         lines.append(f'rank: "{rank}"')
     if repo is not None:
         lines.append(f"repo: {repo}")
+    if public:
+        lines.append("public: true")
     lines += [
         "---",
         "",
@@ -201,7 +253,9 @@ def render_idea_file(
     return "\n".join(lines)
 
 
-def render_reference_file(*, repo: str, rank: str, color: str) -> str:
+def render_reference_file(
+    *, repo: str, rank: str, color: str, public: bool = False
+) -> str:
     """A board entry for an idea whose content lives in its own repository.
 
     The board records that the idea is on it and where it sits; the repo named
@@ -217,6 +271,7 @@ def render_reference_file(*, repo: str, rank: str, color: str) -> str:
             f'color: "{color}"',
             f'rank: "{rank}"',
             f"repo: {repo}",
+            *(["public: true"] if public else []),
             "---",
             "",
             f"# {repo}",
@@ -263,6 +318,8 @@ def parse_idea_file(text: str) -> ParsedIdeaFile:
             parsed.progress = max(0, min(100, int(float(fm["progress"]))))
         except ValueError:
             pass
+    parsed.site = normalize_site(fm.get("site"))
+    parsed.site_public = parsed.site is not None and _is_yes(fm.get("site_public"))
     # Board-level keys are validated and otherwise dropped, in keeping with the
     # rest of the parser: a hand-edited colour or rank that can't be used should
     # cost that one field, not the file.
@@ -275,6 +332,8 @@ def parse_idea_file(text: str) -> ParsedIdeaFile:
             parsed.repo = normalize_repo(fm["repo"])
         except InvalidRepoRef:
             pass
+    # Anything but an explicit yes is private: a typo must not publish a tile.
+    parsed.public = _is_yes(fm.get("public"))
 
     note_lines: list[str] = []
     in_todos = False

@@ -101,6 +101,8 @@ def _render(idea: Idea) -> str:
         status=idea.status,
         progress=idea.progress,
         todos=[ParsedTodo(t.text, t.done, t.github_issue_number) for t in todos],
+        site=idea.site,
+        site_public=bool(idea.site_public),
     )
 
 
@@ -211,6 +213,12 @@ async def _apply_parsed(
         changed = True
     if parsed.progress is not None and parsed.progress != idea.progress:
         idea.progress = parsed.progress
+        changed = True
+    # Git wins outright, like the notes: a site line deleted in the repo is a
+    # site removed, not a value to keep from the database.
+    if parsed.site != idea.site or parsed.site_public != bool(idea.site_public):
+        idea.site = parsed.site
+        idea.site_public = parsed.site_public
         changed = True
     return await _apply_todos(session, idea, parsed.todos) or changed
 

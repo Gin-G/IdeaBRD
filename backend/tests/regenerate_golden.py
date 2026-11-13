@@ -46,6 +46,29 @@ def cases() -> dict[str, str]:
         "reference.md": render_reference_file(
             repo="octocat/hello", rank="a0m", color="#ec4899"
         ),
+        "public-board.md": render_idea_file(
+            title="Shown off",
+            notes="On the owner's public page.",
+            status="active",
+            progress=80,
+            todos=[ParsedTodo("one", True)],
+            color="#6366f1",
+            rank="a0m",
+            public=True,
+        ),
+        "site.md": render_idea_file(
+            title="Runs somewhere",
+            notes="Has a site it is happy to show.",
+            status="active",
+            progress=50,
+            todos=[],
+            guidance=False,
+            site="https://runs.example.net",
+            site_public=True,
+        ),
+        "public-reference.md": render_reference_file(
+            repo="octocat/hello", rank="a0m", color="#ec4899", public=True
+        ),
     }
 
 

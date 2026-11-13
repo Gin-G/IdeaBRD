@@ -33,6 +33,26 @@ package net.nickknows.ideabrd.core
 val VALID_STATUSES = listOf("idea", "active", "paused", "done")
 
 private val COLOR_RE = Regex("^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+
+// Kept identical to _SITE_RE in ideafile.py: both sides must accept and refuse
+// the same sites, or a file round-tripped through the phone loses its link.
+private val SITE_RE =
+    Regex(
+        "^https?://[a-z0-9-]+(?:\\.[a-z0-9-]+)*\\.[a-z]{2,}(?::\\d+)?(?:/\\S*)?$",
+        RegexOption.IGNORE_CASE,
+    )
+private val SCHEME_RE = Regex("^https?://", RegexOption.IGNORE_CASE)
+
+/** `hydrow.example.net` -> `https://hydrow.example.net`; junk -> null. */
+fun normalizeSite(raw: String?): String? {
+    val trimmed = raw?.trim().orEmpty()
+    if (trimmed.isEmpty()) return null
+    val withScheme = if (SCHEME_RE.containsMatchIn(trimmed)) trimmed else "https://$trimmed"
+    return withScheme.takeIf { SITE_RE.matches(it) }
+}
+
+/** Anything but an explicit yes is a no: a typo must never publish. */
+private fun isYes(value: String?): Boolean = value?.lowercase() in setOf("true", "yes")
 private val TODO_RE = Regex("""^\s*[-*]\s*\[( |x|X)]\s*(.*\S)\s*$""")
 private val TODOS_HEADING_RE = Regex("^##\\s+to-?dos\\s*$", RegexOption.IGNORE_CASE)
 
@@ -63,9 +83,15 @@ data class ParsedIdeaFile(
     val notes: String = "",
     val status: String? = null,
     val progress: Int? = null,
+    // Idea-level: travels with the idea, into a linked repo's own IDEA.md.
+    val site: String? = null,
+    val sitePublic: Boolean = false,
     val color: String? = null,
     val rank: String? = null,
     val repo: String? = null,
+    // Shown on the owner's public page. Board-level like rank, and written only
+    // when true, so a private file renders exactly as it did before the key.
+    val public: Boolean = false,
     val todos: List<ParsedTodo> = emptyList(),
 )
 
@@ -87,7 +113,9 @@ the shape below matters more than it looks. Anything the parser
 (backend/app/ideafile.py) can't read is dropped silently.
 
   frontmatter  status: one of idea, active, paused, done. progress: 0-100.
-               Any other key is ignored.
+               site: where it runs, if anywhere ("https://" is assumed).
+               site_public: true to show that link on a public page;
+               anything else keeps it private. Any other key is ignored.
   # heading    The idea title (first H1).
   prose        Everything outside the Todos section becomes the tile's
                notes, shown on the board — so keep it short. Documentation
@@ -102,6 +130,12 @@ the shape below matters more than it looks. Anything the parser
                in this repo. The issue wins: its title becomes the to-do's
                text and its open/closed state the checkbox, both here and on
                the board. Ticking the box in the app closes the issue.
+
+The board owner can list this idea on their public IdeaBRD page. Anyone can
+then read the title, status, progress, to-do counts and the FIRST PARAGRAPH of
+the notes, so make that paragraph the plain pitch: no hostnames, secret paths
+or internals. The site link appears only with "site_public: true". The rest of
+the notes and the to-do text are never shown there.
 
 Working in this repo? This file is the to-do list — use it rather than
 starting a parallel one. Tick items off as you finish them, add new ones as
@@ -152,13 +186,21 @@ fun renderIdeaFile(
     color: String? = null,
     rank: String? = null,
     repo: String? = null,
+    public: Boolean = false,
+    site: String? = null,
+    sitePublic: Boolean = false,
 ): String {
     val lines = mutableListOf("---", "status: $status", "progress: $progress")
+    if (!site.isNullOrEmpty()) {
+        lines += "site: $site"
+        if (sitePublic) lines += "site_public: true"
+    }
     // Quoted because "#..." opens a comment in YAML, and a board file that only
     // our own lenient parser can read is a trap for anything else.
     if (color != null) lines += "color: \"$color\""
     if (rank != null) lines += "rank: \"$rank\""
     if (repo != null) lines += "repo: $repo"
+    if (public) lines += "public: true"
     lines += listOf("---", "", "# $title", "")
     if (guidance) lines += listOf(GUIDANCE, "")
     if (notes.isNotBlank()) lines += listOf(notes.trim(), "")
@@ -179,12 +221,18 @@ fun renderIdeaFile(
  * here holds the idea. The body is derived entirely from [repo], so there is
  * nothing here that can fall out of date with it.
  */
-fun renderReferenceFile(repo: String, rank: String, color: String): String =
-    listOf(
+fun renderReferenceFile(
+    repo: String,
+    rank: String,
+    color: String,
+    public: Boolean = false,
+): String =
+    listOfNotNull(
         "---",
         "color: \"$color\"",
         "rank: \"$rank\"",
         "repo: $repo",
+        if (public) "public: true" else null,
         "---",
         "",
         "# $repo",
@@ -233,6 +281,10 @@ fun parseIdeaFile(text: String): ParsedIdeaFile {
     val color = fm["color"]?.takeIf { COLOR_RE.matches(it) }?.lowercase()
     val rank = fm["rank"]?.takeIf { isRank(it) }
     val repo = fm["repo"]?.let { normalizeRepoOrNull(it) }
+    // Anything but an explicit yes is private: a typo must not publish a tile.
+    val public = isYes(fm["public"])
+    val site = normalizeSite(fm["site"])
+    val sitePublic = site != null && isYes(fm["site_public"])
 
     var title: String? = null
     val noteLines = mutableListOf<String>()
@@ -274,6 +326,9 @@ fun parseIdeaFile(text: String): ParsedIdeaFile {
         color = color,
         rank = rank,
         repo = repo,
+        public = public,
+        site = site,
+        sitePublic = sitePublic,
         todos = todos,
     )
 }

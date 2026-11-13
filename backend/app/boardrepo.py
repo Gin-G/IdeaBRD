@@ -14,7 +14,8 @@ frontmatter instead (``rank`` and ``color``), and the board is built by listing
 
 A directory here is not the same thing as a *linked* repo. An idea that links
 its own repo keeps its content there, and its directory on the board holds a
-stub carrying only what the board owns: rank, colour, and the ``repo`` pointer.
+stub carrying only what the board owns: rank, colour, the ``repo`` pointer, and
+``public: true`` when the owner lists it on their public page.
 That split is why ``render_idea_file`` writes the board-level keys only when it
 is given them — a linked repo's own IDEA.md must not sprout someone else's
 board position.

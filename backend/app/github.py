@@ -106,6 +106,50 @@ async def fetch_repo(repo: str, *, client: httpx.AsyncClient | None = None) -> G
     return result
 
 
+@dataclass
+class RepoMeta:
+    """What a public page may say about a repo it links to."""
+
+    full_name: str
+    html_url: str
+    private: bool
+
+
+async def fetch_repo_meta(
+    repo: str,
+    *,
+    token: str | None = None,
+    client: httpx.AsyncClient | None = None,
+) -> RepoMeta | None:
+    """A repo's visibility, read with ``token``. None if absent.
+
+    Separate from ``fetch_repo`` because that one is unauthenticated: it cannot
+    see a private repo at all, and on a public page it would spend GitHub's
+    60-an-hour anonymous allowance on every view.
+    """
+    full_name = normalize_repo(repo)
+    owned_client = client is None
+    client = client or httpx.AsyncClient(base_url=settings.github_api_base, timeout=10.0)
+    try:
+        resp = await client.get(f"/repos/{full_name}", headers=_headers(token))
+        if resp.status_code == 404:
+            return None
+        if resp.status_code == 403:
+            raise GitHubError("GitHub rate limit or access denied", status_code=403)
+        resp.raise_for_status()
+        data = resp.json()
+        return RepoMeta(
+            full_name=data["full_name"],
+            html_url=data["html_url"],
+            private=bool(data.get("private", True)),
+        )
+    except httpx.HTTPError as exc:
+        raise GitHubError(f"GitHub request failed: {exc}") from exc
+    finally:
+        if owned_client:
+            await client.aclose()
+
+
 async def get_file(
     repo: str,
     path: str,

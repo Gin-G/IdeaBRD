@@ -38,6 +38,8 @@ class LinkedRepoStore(private val root: File) {
                 status = idea.status ?: "idea",
                 progress = idea.progress ?: 0,
                 todos = idea.todos,
+                site = idea.site,
+                sitePublic = idea.sitePublic,
             )
         )
     }

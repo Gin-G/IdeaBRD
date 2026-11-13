@@ -41,6 +41,40 @@ WebSocket. Built to run on Kubernetes.
 
 ---
 
+## Public page
+
+Tick **Show on my public page** on any idea you own and it is listed at
+`/p/<your GitHub login>`, a page anyone can open without signing in. The flag
+is written into the board repo as `public: true` on that tile's `IDEA.md`, and
+the page is read from the board repo, not the database, using your GitHub
+OAuth token, so a private board works.
+
+What visitors see is deliberately narrow: title, status, progress, to-do
+*counts*, the **first paragraph** of the notes, the idea's site only when it is
+marked `site_public: true`, and a link to the repo only when the repo is
+public. The rest of the notes, the to-do text and private repo names never
+leave, and nothing guesses a link out of the notes. Ideas shared *with* you are
+never public on your board.
+
+An idea's site is set in the edit form, or in its `IDEA.md`:
+
+```markdown
+---
+status: active
+progress: 70
+site: myapp.example.com      # https:// is assumed
+site_public: true            # omit for a site behind a login
+---
+```
+
+`site` is idea-level, so for a linked idea it lives in that repo's own
+`IDEA.md`; `public` is board-level and lives on the board repo's tile. The
+guidance block written into every `IDEA.md` explains both, so an agent working
+in a repo knows its first paragraph may be published.
+
+The same data is JSON at `GET /api/public/<login>`, cached for ten minutes, for
+sites that want to render it themselves.
+
 ## Local development
 
 ```bash
@@ -240,6 +274,7 @@ repo — **git is the source of truth**:
 ---
 status: active
 progress: 60
+site: myidea.example.com
 ---
 
 # My idea
@@ -300,6 +335,8 @@ The parts that silently cost you work:
 | Prose *outside* the section becomes the tile's notes | Long write-ups are published to the board, not filed away — keep it short |
 | Items match existing rows by **exact text**, unless they carry `(#12)` | Rewording a plain to-do is a delete plus an insert, not an edit — a checked item comes back unchecked. Issue-backed ones match on the number, so they survive rewording |
 | `status` ∈ `idea`/`active`/`paused`/`done`, `progress` 0-100 | Anything else in frontmatter is ignored |
+| `site` must look like a web address; `site_public` only counts as `true`/`yes`, and only with a site | A malformed site is dropped, and a misspelt `site_public` keeps the link private |
+| The first paragraph of the notes is what a public page shows | Hostnames or internals written there are published once the tile is public |
 
 Render and parse both live in `backend/app/ideafile.py`; the guidance block is the `GUIDANCE`
 constant there.

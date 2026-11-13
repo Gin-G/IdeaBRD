@@ -73,6 +73,8 @@ export interface IdeaSummary {
 	status: Status;
 	progress: number;
 	color: string;
+	/** Listed on the owner's public page, /p/<github login>. */
+	public: boolean;
 	logo_url: string | null;
 	github_repo: string | null;
 	position: number;
@@ -84,6 +86,10 @@ export interface IdeaSummary {
 
 export interface Idea extends IdeaSummary {
 	notes: string;
+	/** Where the idea runs, if anywhere. Lives in the idea's own IDEA.md. */
+	site: string | null;
+	/** Whether a public page may show the site link. */
+	site_public: boolean;
 	created_at: string;
 	updated_at: string;
 	todos: Todo[];
@@ -186,3 +192,26 @@ export const STATUS_STYLES: Record<Status, string> = {
 	paused: 'bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/30',
 	done: 'bg-violet-500/15 text-violet-300 ring-1 ring-violet-500/30'
 };
+
+/** One idea on an owner's public page: only what the owner chose to show. */
+export interface PublicIdea {
+	slug: string;
+	title: string;
+	status: Status;
+	progress: number;
+	/** The first paragraph of the notes, as plain text. */
+	summary: string;
+	color: string | null;
+	todos_done: number;
+	todos_total: number;
+	/** Set only for a public repo. */
+	repo_url: string | null;
+	site_url: string | null;
+	logo_url: string | null;
+}
+
+export interface PublicBoard {
+	login: string;
+	name: string | null;
+	ideas: PublicIdea[];
+}

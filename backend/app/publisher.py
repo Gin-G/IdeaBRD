@@ -205,9 +205,12 @@ def render_tile(tile: BoardTile) -> str:
     in full — that is the whole difference between the two.
     """
     idea = tile.idea
+    # Public is the owner's call about their own board. A tile shared onto
+    # someone else's board is never public there, whatever the owner chose.
+    public = bool(idea.public) and not tile.shared
     if idea.github_repo:
         return render_reference_file(
-            repo=idea.github_repo, rank=tile.rank or "", color=idea.color
+            repo=idea.github_repo, rank=tile.rank or "", color=idea.color, public=public
         )
     todos = sorted(idea.todos, key=lambda t: (t.position, t.id))
     return render_idea_file(
@@ -219,6 +222,9 @@ def render_tile(tile: BoardTile) -> str:
         color=idea.color,
         rank=tile.rank,
         repo=idea.github_repo,
+        public=public,
+        site=idea.site,
+        site_public=bool(idea.site_public),
     )
 
 

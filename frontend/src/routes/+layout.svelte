@@ -7,6 +7,7 @@
 	import BoardPanel from '$lib/components/BoardPanel.svelte';
 	import NativeSetup from '$lib/components/NativeSetup.svelte';
 	import { isNative } from '$lib/native/plugins';
+	import { page } from '$app/state';
 
 	let { children } = $props();
 	let showAccount = $state(false);
@@ -16,7 +17,13 @@
 	const native = isNative();
 	let deviceReady = $state(false);
 
-	onMount(loadUser);
+	// Public pages are for people who will never sign in: no session check, no
+	// 401, and so no bounce to the login page.
+	const isPublicPage = $derived(page.url.pathname.startsWith('/p/'));
+
+	onMount(() => {
+		if (!isPublicPage) loadUser();
+	});
 
 	async function deviceSetupDone() {
 		deviceReady = true;
@@ -66,7 +73,9 @@
 	</header>
 
 	<main class="mx-auto max-w-7xl px-4 py-8 sm:px-6">
-		{#if auth.loading}
+		{#if isPublicPage}
+			{@render children()}
+		{:else if auth.loading}
 			<div class="flex items-center justify-center py-32 text-slate-400">
 				<div
 					class="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-indigo-400"

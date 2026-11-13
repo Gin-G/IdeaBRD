@@ -5,6 +5,7 @@ from datetime import datetime
 from sqlalchemy import (
     JSON,
     Boolean,
+    false,
     DateTime,
     ForeignKey,
     Integer,
@@ -95,6 +96,15 @@ class Idea(Base):
     status: Mapped[str] = mapped_column(String(20), default="idea")
     progress: Mapped[int] = mapped_column(SmallInteger, default=0)
     color: Mapped[str] = mapped_column(String(20), default="#6366f1")
+    # Listed on the owner's public page. Off by default: making an idea public
+    # is always a choice, never a migration's or a default's.
+    public: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    # Where the idea runs, and whether a public page may link it. Idea-level,
+    # unlike ``public``: they travel into a linked repo's own IDEA.md.
+    site: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    site_public: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
     logo_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     # "owner/name" form, or null for note-only tiles
     github_repo: Mapped[str | None] = mapped_column(String(255), nullable=True)

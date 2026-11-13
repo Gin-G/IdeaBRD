@@ -73,6 +73,7 @@ class BoardStore(private val root: File) {
                     repo = idea.repo,
                     rank = idea.rank ?: FIRST,
                     color = idea.color ?: DEFAULT_COLOR,
+                    public = idea.public,
                 )
             } else {
                 renderIdeaFile(
@@ -83,6 +84,9 @@ class BoardStore(private val root: File) {
                     todos = idea.todos,
                     color = idea.color ?: DEFAULT_COLOR,
                     rank = idea.rank ?: FIRST,
+                    public = idea.public,
+                    site = idea.site,
+                    sitePublic = idea.sitePublic,
                 )
             }
         File(dir, IDEA_FILE).writeText(text)
